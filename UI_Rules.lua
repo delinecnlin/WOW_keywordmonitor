@@ -98,7 +98,7 @@ function WKM:CommitPendingRuleUpdate()
         return
     end
 
-    self.lastRuleUndo = before
+    self.DB.lastRuleUndo = before
     local updated = self:FindRule(pending.id)
     self:LoadRuleIntoEditor(updated)
     setStatus(self.mainFrame.rulesPanel, "修改已保存；如有误可点“回退上次修改”", "ff66ff99")
@@ -106,7 +106,7 @@ end
 
 function WKM:UndoLastRuleUpdate()
     local panel = self.mainFrame and self.mainFrame.rulesPanel
-    local backup = self.lastRuleUndo
+    local backup = self.DB.lastRuleUndo
     if not backup then
         setStatus(panel, "当前没有可回退的规则修改", "ffffcc55")
         return
@@ -124,7 +124,7 @@ function WKM:UndoLastRuleUpdate()
         return
     end
 
-    self.lastRuleUndo = nil
+    self.DB.lastRuleUndo = false
     self:LoadRuleIntoEditor(self:FindRule(backup.id))
     setStatus(panel, "已回退到修改前的规则", "ff66ff99")
 end
