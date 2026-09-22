@@ -208,6 +208,7 @@ local function initializeDB()
         nextRuleId = 1,
         nextMessageId = 1,
         unread = 0,
+        lastRuleUndo = false,
         minimapAngle = 225,
         rules = {},
         history = {},
