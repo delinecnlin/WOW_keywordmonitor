@@ -135,6 +135,8 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
     if not self.DB.enabled or not message or message == "" then return end
     if shortName(sender) == UnitName("player") then return end
 
+    self:PruneExpiredHistory()
+
     local matchedRules, terms = self:MatchText(message)
     if #matchedRules == 0 then return end
 
@@ -178,6 +180,32 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
     if self.RefreshHistoryUI then self:RefreshHistoryUI() end
 end
 
+function WKM:PruneExpiredHistory()
+    if not self.DB or not self.DB.settings or not self.DB.settings.autoDeleteOldMessages then
+        return 0
+    end
+
+    local minutes = tonumber(self.DB.settings.autoDeleteMinutes) or 10
+    local cutoff = time() - math.max(1, minutes) * 60
+    local history = self.DB.history
+    local removed = 0
+
+    for i = #history, 1, -1 do
+        local entry = history[i]
+        if (entry.timestamp or 0) < cutoff then
+            table.remove(history, i)
+            removed = removed + 1
+        end
+    end
+
+    if removed > 0 then
+        self.DB.unread = math.min(self.DB.unread or 0, #history)
+        if self.UpdateMinimapState then self:UpdateMinimapState() end
+    end
+
+    return removed
+end
+
 function WKM:ClearHistory()
     self.DB.history = {}
     self.DB.unread = 0
@@ -217,6 +245,8 @@ local function initializeDB()
             dedupeSeconds = 8,
             screenAlert = true,
             sound = true,
+            autoDeleteOldMessages = false,
+            autoDeleteMinutes = 10,
         },
     })
 
@@ -236,6 +266,8 @@ local function initializeDB()
     while #WKM.DB.history > WKM.DB.settings.maxHistory do
         table.remove(WKM.DB.history, 1)
     end
+
+    WKM:PruneExpiredHistory()
 end
 
 local function handleSlash(input)
