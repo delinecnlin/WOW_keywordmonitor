@@ -41,6 +41,7 @@ function WKM:UpdateGlobalState()
     self.mainFrame.listenButton:SetText(self.DB.enabled and "监听：开启" or "监听：关闭")
     self.mainFrame.soundCheck:SetChecked(self.DB.settings.sound)
     self.mainFrame.screenCheck:SetChecked(self.DB.settings.screenAlert)
+    self.mainFrame.autoDeleteCheck:SetChecked(self.DB.settings.autoDeleteOldMessages)
 end
 
 function WKM:ShowTab(tabName)
@@ -116,6 +117,17 @@ function WKM:CreateMainWindow()
     addCheckLabel(frame.screenCheck, "屏幕大字")
     frame.screenCheck:SetScript("OnClick", function(self)
         WKM.DB.settings.screenAlert = self:GetChecked() and true or false
+    end)
+
+    frame.autoDeleteCheck = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+    frame.autoDeleteCheck:SetPoint("LEFT", frame.screenCheck, "RIGHT", 115, 0)
+    addCheckLabel(frame.autoDeleteCheck, "自动删除 >10分钟")
+    frame.autoDeleteCheck:SetScript("OnClick", function(self)
+        WKM.DB.settings.autoDeleteOldMessages = self:GetChecked() and true or false
+        if WKM.DB.settings.autoDeleteOldMessages then
+            WKM:PruneExpiredHistory()
+            if WKM.RefreshHistoryUI then WKM:RefreshHistoryUI(true) end
+        end
     end)
 
     frame.historyTab = self:CreateButton(frame, "匹配消息", 110, 26)
