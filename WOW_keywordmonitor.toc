@@ -1,0 +1,16 @@
+## Interface: 11509
+## Title: WOW Keyword Monitor
+## Notes: Classic Era / Hardcore chat keyword monitor with boolean rules and history
+## Author: delinecnlin
+## Version: 0.1.0-alpha
+## SavedVariables: WOWKeywordMonitorDB
+## DefaultState: Enabled
+
+Parser.lua
+Rules.lua
+Alerts.lua
+UI.lua
+UI_History.lua
+UI_Rules.lua
+Minimap.lua
+Core.lua
