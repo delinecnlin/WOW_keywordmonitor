@@ -6,7 +6,11 @@
 ## SavedVariables: WOWKeywordMonitorDB
 ## DefaultState: Enabled
 
+Parser.lua
 Rules.lua
 Alerts.lua
 UI.lua
+UI_History.lua
+UI_Rules.lua
+Minimap.lua
 Core.lua
