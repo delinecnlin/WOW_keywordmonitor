@@ -29,6 +29,13 @@ function WKM:CreateEditBox(parent, width, height)
     return edit
 end
 
+local function addCheckLabel(check, text)
+    local label = check:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    label:SetPoint("LEFT", check, "RIGHT", 2, 0)
+    label:SetText(text)
+    return label
+end
+
 function WKM:UpdateGlobalState()
     if not self.mainFrame then return end
     self.mainFrame.listenButton:SetText(self.DB.enabled and "监听：开启" or "监听：关闭")
@@ -99,14 +106,14 @@ function WKM:CreateMainWindow()
 
     frame.soundCheck = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
     frame.soundCheck:SetPoint("TOPLEFT", 22, -48)
-    frame.soundCheck.text:SetText("声音提醒")
+    addCheckLabel(frame.soundCheck, "声音提醒")
     frame.soundCheck:SetScript("OnClick", function(self)
         WKM.DB.settings.sound = self:GetChecked() and true or false
     end)
 
     frame.screenCheck = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
     frame.screenCheck:SetPoint("LEFT", frame.soundCheck, "RIGHT", 100, 0)
-    frame.screenCheck.text:SetText("屏幕大字")
+    addCheckLabel(frame.screenCheck, "屏幕大字")
     frame.screenCheck:SetScript("OnClick", function(self)
         WKM.DB.settings.screenAlert = self:GetChecked() and true or false
     end)
