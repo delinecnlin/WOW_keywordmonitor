@@ -1,6 +1,8 @@
 WOWKeywordMonitor = WOWKeywordMonitor or {}
 local WKM = WOWKeywordMonitor
 local ROWS = 8
+local trim
+local setStatus
 
 local function extractLinkText(link)
     if type(link) ~= "string" or link == "" then return nil end
@@ -12,7 +14,7 @@ local function extractLinkText(link)
     text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
     text = text:gsub("|r", "")
     text = text:gsub("^%[", ""):gsub("%]$", "")
-    text = trim and trim(text) or text:match("^%s*(.-)%s*$")
+    text = trim(text)
 
     if text == "" then return nil end
     return text
@@ -62,11 +64,11 @@ function WKM:InstallRuleLinkHook()
     end
 end
 
-local function trim(value)
+trim = function(value)
     return (value or ""):match("^%s*(.-)%s*$")
 end
 
-local function setStatus(panel, text, color)
+setStatus = function(panel, text, color)
     color = color or "ffffffff"
     panel.status:SetText("|c" .. color .. tostring(text or "") .. "|r")
 end
