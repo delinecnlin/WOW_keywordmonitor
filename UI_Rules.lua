@@ -2,6 +2,66 @@ WOWKeywordMonitor = WOWKeywordMonitor or {}
 local WKM = WOWKeywordMonitor
 local ROWS = 8
 
+local function extractLinkText(link)
+    if type(link) ~= "string" or link == "" then return nil end
+
+    local text = link:match("|h%[([^%]]+)%]|h")
+        or link:match("|h(.-)|h")
+        or link
+
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
+    text = text:gsub("|r", "")
+    text = text:gsub("^%[", ""):gsub("%]$", "")
+    text = trim and trim(text) or text:match("^%s*(.-)%s*$")
+
+    if text == "" then return nil end
+    return text
+end
+
+local function asRuleTerm(text)
+    if not text then return nil end
+    if text:find("%s") then
+        text = text:gsub('"', "")
+        return '"' .. text .. '"'
+    end
+    return text
+end
+
+function WKM:InsertGameLinkIntoRule(link)
+    local panel = self.mainFrame and self.mainFrame.rulesPanel
+    if not panel or not panel:IsShown() or not panel.exprEdit or not panel.exprEdit:HasFocus() then
+        return false
+    end
+
+    local text = asRuleTerm(extractLinkText(link))
+    if not text then return false end
+
+    local current = panel.exprEdit:GetText() or ""
+    if current == "" then
+        panel.exprEdit:Insert(text)
+    else
+        panel.exprEdit:Insert(" " .. text .. " ")
+    end
+
+    setStatus(panel, "已插入游戏内文本：" .. text, "ff66ff99")
+    return true
+end
+
+function WKM:InstallRuleLinkHook()
+    if self.ruleLinkHookInstalled then return end
+    self.ruleLinkHookInstalled = true
+
+    local function onLink(link)
+        WKM:InsertGameLinkIntoRule(link)
+    end
+
+    if ChatFrameUtil and ChatFrameUtil.InsertLink then
+        hooksecurefunc(ChatFrameUtil, "InsertLink", onLink)
+    elseif ChatEdit_InsertLink then
+        hooksecurefunc("ChatEdit_InsertLink", onLink)
+    end
+end
+
 local function trim(value)
     return (value or ""):match("^%s*(.-)%s*$")
 end
@@ -232,6 +292,9 @@ function WKM:CreateRulesPanel(panel)
     panel.exprEdit = self:CreateEditBox(panel, 600, 26)
     panel.exprEdit:SetPoint("TOPLEFT", 210, -28)
     panel.exprEdit:SetScript("OnTextChanged", function() markDirty(panel) end)
+    panel.exprEdit:SetScript("OnEditFocusGained", function()
+        setStatus(panel, "规则框已激活：可 Shift+点击任务、物品等游戏链接插入名称", "ffbbbbbb")
+    end)
 
     panel.mode = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     panel.mode:SetPoint("TOPLEFT", 8, -62)
@@ -263,7 +326,7 @@ function WKM:CreateRulesPanel(panel)
     help:SetPoint("TOPLEFT", 8, -110)
     help:SetWidth(800)
     help:SetJustifyH("LEFT")
-    help:SetText("支持 AND / OR / NOT / 括号；空格默认 AND。点击下方规则名称进入编辑。")
+    help:SetText("支持 AND / OR / NOT / 括号；空格默认 AND。规则框获得焦点后可 Shift+点击任务/物品链接插入名称。")
 
     local header = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     header:SetPoint("TOPLEFT", 8, -134)
@@ -310,6 +373,7 @@ function WKM:CreateRulesPanel(panel)
         WKM:RefreshRulesUI()
     end)
 
+    self:InstallRuleLinkHook()
     self:BeginNewRule()
 end
 
