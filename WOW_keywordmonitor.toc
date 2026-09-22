@@ -2,7 +2,7 @@
 ## Title: WOW Keyword Monitor
 ## Notes: Classic Era / Hardcore chat keyword monitor with boolean rules and history
 ## Author: delinecnlin
-## Version: 0.1.1-alpha
+## Version: 0.1.2-alpha
 ## SavedVariables: WOWKeywordMonitorDB
 ## DefaultState: Enabled
 
