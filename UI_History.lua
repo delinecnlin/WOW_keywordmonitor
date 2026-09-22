@@ -102,6 +102,7 @@ end
 
 function WKM:RefreshHistoryUI(reset)
     if not self.mainFrame then return end
+    self:PruneExpiredHistory()
     local p, hist = self.mainFrame.historyPanel, self.DB.history
     if reset then p.offset = 0 end
     p.offset = math.min(p.offset or 0, math.max(0, #hist - ROWS))
