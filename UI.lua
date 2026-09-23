@@ -29,6 +29,57 @@ function WKM:CreateEditBox(parent, width, height)
     return edit
 end
 
+function WKM:SetToggleState(toggle, enabled)
+    if not toggle then return end
+    toggle.value = enabled and true or false
+
+    if toggle.value then
+        toggle.background:SetVertexColor(0.20, 0.72, 0.34, 0.95)
+        toggle.knob:ClearAllPoints()
+        toggle.knob:SetPoint("RIGHT", -3, 0)
+        toggle.stateText:SetText("ON")
+        toggle.stateText:ClearAllPoints()
+        toggle.stateText:SetPoint("LEFT", 6, 0)
+    else
+        toggle.background:SetVertexColor(0.34, 0.34, 0.34, 0.95)
+        toggle.knob:ClearAllPoints()
+        toggle.knob:SetPoint("LEFT", 3, 0)
+        toggle.stateText:SetText("OFF")
+        toggle.stateText:ClearAllPoints()
+        toggle.stateText:SetPoint("RIGHT", -5, 0)
+    end
+end
+
+function WKM:CreateToggleSwitch(parent, enabled, onToggle)
+    local toggle = CreateFrame("Button", nil, parent)
+    toggle:SetSize(54, 26)
+    toggle:RegisterForClicks("LeftButtonUp")
+
+    local bg = toggle:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetTexture("Interface\\Buttons\\WHITE8x8")
+    toggle.background = bg
+
+    local knob = toggle:CreateTexture(nil, "ARTWORK")
+    knob:SetSize(20, 20)
+    knob:SetTexture("Interface\\Buttons\\WHITE8x8")
+    knob:SetVertexColor(0.95, 0.95, 0.95, 1)
+    toggle.knob = knob
+
+    local stateText = toggle:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    stateText:SetTextColor(1, 1, 1)
+    toggle.stateText = stateText
+
+    toggle:SetScript("OnClick", function(self)
+        local newValue = not self.value
+        WKM:SetToggleState(self, newValue)
+        if onToggle then onToggle(newValue, self) end
+    end)
+
+    self:SetToggleState(toggle, enabled)
+    return toggle
+end
+
 local function addCheckLabel(check, text)
     local label = check:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     label:SetPoint("LEFT", check, "RIGHT", 2, 0)
@@ -38,7 +89,7 @@ end
 
 function WKM:UpdateGlobalState()
     if not self.mainFrame then return end
-    self.mainFrame.listenButton:SetText(self.DB.enabled and "监听：开启" or "监听：关闭")
+    self:SetToggleState(self.mainFrame.listenSwitch, self.DB.enabled)
     self.mainFrame.soundCheck:SetChecked(self.DB.settings.sound)
     self.mainFrame.screenCheck:SetChecked(self.DB.settings.screenAlert)
     self.mainFrame.autoDeleteCheck:SetChecked(self.DB.settings.autoDeleteOldMessages)
@@ -99,11 +150,14 @@ function WKM:CreateMainWindow()
     local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -5, -5)
 
-    frame.listenButton = self:CreateButton(frame, "", 100, 24)
-    frame.listenButton:SetPoint("TOPRIGHT", -48, -42)
-    frame.listenButton:SetScript("OnClick", function()
-        WKM:SetEnabled(not WKM.DB.enabled)
+    frame.listenLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.listenLabel:SetPoint("TOPRIGHT", -112, -48)
+    frame.listenLabel:SetText("全局监听")
+
+    frame.listenSwitch = self:CreateToggleSwitch(frame, self.DB.enabled, function(value)
+        WKM:SetEnabled(value)
     end)
+    frame.listenSwitch:SetPoint("TOPRIGHT", -48, -40)
 
     frame.soundCheck = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
     frame.soundCheck:SetPoint("TOPLEFT", 22, -48)
