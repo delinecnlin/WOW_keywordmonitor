@@ -55,6 +55,26 @@ function WKM:GetRelativeTime(timestamp)
     return tostring(math.floor(delta / 86400)) .. "天前"
 end
 
+function WKM:GetPlayerClassByGUID(guid)
+    if not guid or guid == "" then return nil, nil end
+
+    if GetPlayerInfoByGUID then
+        local localizedClass, classFile = GetPlayerInfoByGUID(guid)
+        if classFile and classFile ~= "" then
+            return classFile, localizedClass
+        end
+    end
+
+    if UnitClassFromGUID then
+        local localizedClass, classFile = UnitClassFromGUID(guid)
+        if classFile and classFile ~= "" then
+            return classFile, localizedClass
+        end
+    end
+
+    return nil, nil
+end
+
 function WKM:FindRule(id)
     for index, rule in ipairs(self.DB.rules) do
         if rule.id == id then return rule, index end
@@ -156,11 +176,15 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
         if now - seenAt > 60 then recentMessages[k] = nil end
     end
 
+    local classFile, className = self:GetPlayerClassByGUID(guid)
+
     local entry = {
         id = self.DB.nextMessageId,
         timestamp = now,
         sender = sender or "?",
         guid = guid,
+        classFile = classFile,
+        className = className,
         message = message,
         channel = channelName or "?",
         channelIndex = channelIndex,
