@@ -332,7 +332,7 @@ function WKM:CreateRulesPanel(panel)
 
     local header = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     header:SetPoint("TOPLEFT", 8, -134)
-    header:SetText("启用   名称                         表达式")
+    header:SetText("状态        名称                       表达式")
 
     for i = 1, ROWS do
         local row = CreateFrame("Frame", nil, panel)
@@ -340,22 +340,21 @@ function WKM:CreateRulesPanel(panel)
         row:SetPoint("TOPLEFT", 4, -154 - (i - 1) * 38)
         row:SetPoint("RIGHT", -4, 0)
 
-        row.check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-        row.check:SetPoint("LEFT", 2, 0)
-        row.check:SetScript("OnClick", function(self)
-            if self.ruleId then WKM:UpdateRule(self.ruleId, nil, nil, self:GetChecked()) end
+        row.switch = WKM:CreateToggleSwitch(row, true, function(value, self)
+            if self.ruleId then WKM:UpdateRule(self.ruleId, nil, nil, value) end
         end)
+        row.switch:SetPoint("LEFT", 2, 0)
 
-        row.name = WKM:CreateButton(row, "", 180, 24)
-        row.name:SetPoint("LEFT", 42, 0)
+        row.name = WKM:CreateButton(row, "", 170, 24)
+        row.name:SetPoint("LEFT", 64, 0)
         row.name:SetScript("OnClick", function(self)
             local rule = WKM:FindRule(self.ruleId)
             if rule then WKM:LoadRuleIntoEditor(rule) end
         end)
 
         row.expr = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        row.expr:SetPoint("LEFT", 228, 0)
-        row.expr:SetWidth(505)
+        row.expr:SetPoint("LEFT", 240, 0)
+        row.expr:SetWidth(493)
         row.expr:SetJustifyH("LEFT")
         row.expr:SetWordWrap(false)
 
@@ -389,8 +388,8 @@ function WKM:RefreshRulesUI(reset)
         local rule = self.DB.rules[panel.offset + i]
         if rule then
             row:Show()
-            row.check.ruleId = rule.id
-            row.check:SetChecked(rule.enabled)
+            row.switch.ruleId = rule.id
+            WKM:SetToggleState(row.switch, rule.enabled)
             row.name.ruleId = rule.id
             row.name:SetText(rule.name)
             row.expr:SetText(rule.expression)
