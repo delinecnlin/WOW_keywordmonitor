@@ -244,12 +244,8 @@ end
 
 function WKM:SetEnabled(enabled)
     self.DB.enabled = enabled and true or false
-    if self.DB.enabled then
-        eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
-    else
-        eventFrame:UnregisterEvent("CHAT_MSG_CHANNEL")
-    end
     if self.UpdateGlobalState then self:UpdateGlobalState() end
+    if self.UpdateMinimapState then self:UpdateMinimapState() end
 end
 
 local function initializeDB()
@@ -334,7 +330,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if loaded ~= ADDON_NAME then return end
 
         initializeDB()
-        if WKM.DB.enabled then eventFrame:RegisterEvent("CHAT_MSG_CHANNEL") end
+        eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
         if WKM.CreateMainWindow then WKM:CreateMainWindow() end
         if WKM.CreateMinimapButton then WKM:CreateMinimapButton() end
 
