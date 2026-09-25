@@ -139,6 +139,19 @@ function WKM:CreateMainWindow()
     self:StylePanel(frame)
     self.mainFrame = frame
 
+    if UISpecialFrames then
+        local found = false
+        for _, frameName in ipairs(UISpecialFrames) do
+            if frameName == "WOWKeywordMonitorMainFrame" then
+                found = true
+                break
+            end
+        end
+        if not found then
+            table.insert(UISpecialFrames, "WOWKeywordMonitorMainFrame")
+        end
+    end
+
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 22, -18)
     title:SetText("WOW Keyword Monitor")
