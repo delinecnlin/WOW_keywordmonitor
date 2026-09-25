@@ -15,6 +15,14 @@ function WKM:Notify(entry)
         PlaySound(SOUNDKIT.TELL_MESSAGE, "Master")
     end
 
+    if settings.clientIconAlert and FlashClientIcon then
+        local now = GetTime and GetTime() or 0
+        if not self.lastClientIconFlash or now - self.lastClientIconFlash >= 2 then
+            self.lastClientIconFlash = now
+            pcall(FlashClientIcon, true)
+        end
+    end
+
     if settings.screenAlert and RaidNotice_AddMessage and RaidWarningFrame then
         local rules = table.concat(entry.ruleNames or {}, ", ")
         local line = string.format("[%s] %s: %s", rules, entry.sender or "?", shorten(entry.message, 150))
