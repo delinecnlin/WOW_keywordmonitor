@@ -93,6 +93,7 @@ function WKM:UpdateGlobalState()
     self.mainFrame.soundCheck:SetChecked(self.DB.settings.sound)
     self.mainFrame.screenCheck:SetChecked(self.DB.settings.screenAlert)
     self.mainFrame.autoDeleteCheck:SetChecked(self.DB.settings.autoDeleteOldMessages)
+    self.mainFrame.clientIconCheck:SetChecked(self.DB.settings.clientIconAlert)
 end
 
 function WKM:ShowTab(tabName)
@@ -195,6 +196,13 @@ function WKM:CreateMainWindow()
             WKM:PruneExpiredHistory()
             if WKM.RefreshHistoryUI then WKM:RefreshHistoryUI(true) end
         end
+    end)
+
+    frame.clientIconCheck = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+    frame.clientIconCheck:SetPoint("LEFT", frame.autoDeleteCheck, "RIGHT", 150, 0)
+    addCheckLabel(frame.clientIconCheck, "Dock/任务栏提醒")
+    frame.clientIconCheck:SetScript("OnClick", function(self)
+        WKM.DB.settings.clientIconAlert = self:GetChecked() and true or false
     end)
 
     frame.historyTab = self:CreateButton(frame, "匹配消息", 110, 26)
