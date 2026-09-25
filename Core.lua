@@ -265,6 +265,7 @@ local function initializeDB()
             dedupeSeconds = 8,
             screenAlert = true,
             sound = true,
+            clientIconAlert = true,
             autoDeleteOldMessages = false,
             autoDeleteMinutes = 10,
         },
