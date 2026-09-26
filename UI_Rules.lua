@@ -1,6 +1,6 @@
 WOWKeywordMonitor = WOWKeywordMonitor or {}
 local WKM = WOWKeywordMonitor
-local ROWS = 8
+local ROW_H = 38
 local trim
 local setStatus
 
@@ -214,9 +214,7 @@ function WKM:SaveRuleEditor()
             return
         end
         self:LoadRuleIntoEditor(result)
-        panel.offset = 0
-        if panel.scrollBar then panel.scrollBar:SetValue(0) end
-        self:RefreshRulesUI()
+        self:RefreshRulesUI(true)
         setStatus(panel, "新规则已创建", "ff66ff99")
         return
     end
@@ -279,26 +277,71 @@ StaticPopupDialogs["WKM_CONFIRM_RULE_DELETE"] = {
     preferredIndex = 3,
 }
 
-function WKM:CreateRulesPanel(panel)
-    panel.offset, panel.rows = 0, {}
+function WKM:ScrollRulesByWheel(panel, delta)
+    if not panel or not panel.ruleScroll then return end
+    local scrollFrame = panel.ruleScroll
+    local maxScroll = scrollFrame:GetVerticalScrollRange() or 0
+    local current = scrollFrame:GetVerticalScroll() or 0
+    local step = ROW_H * 2
+    local target = current - (delta * step)
+    target = math.max(0, math.min(maxScroll, target))
 
-    local function maxOffset()
-        return math.max(0, #WKM.DB.rules - ROWS)
+    scrollFrame:SetVerticalScroll(target)
+    if panel.ruleScrollBar then
+        panel.ruleScrollBar:SetValue(target)
     end
+end
 
-    local function setOffset(value)
-        local max = maxOffset()
-        local offset = math.floor((tonumber(value) or 0) + 0.5)
-        panel.offset = math.max(0, math.min(max, offset))
-        if panel.scrollBar and panel.scrollBar:GetValue() ~= panel.offset then
-            panel.scrollBar:SetValue(panel.offset)
+local function bindRuleWheel(widget, panel)
+    widget:EnableMouseWheel(true)
+    widget:SetScript("OnMouseWheel", function(_, delta)
+        WKM:ScrollRulesByWheel(panel, delta)
+    end)
+end
+
+function WKM:CreateRuleRow(panel, index)
+    local parent = panel.ruleScrollChild
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetHeight(ROW_H)
+    row:SetPoint("TOPLEFT", 0, -((index - 1) * ROW_H))
+    row:SetPoint("RIGHT", -4, 0)
+    bindRuleWheel(row, panel)
+
+    row.switch = self:CreateToggleSwitch(row, true, function(value, toggle)
+        if toggle.ruleId then
+            WKM:UpdateRule(toggle.ruleId, nil, nil, value)
         end
-        WKM:RefreshRulesUI()
-    end
+    end)
+    row.switch:SetPoint("LEFT", 2, 0)
+    bindRuleWheel(row.switch, panel)
 
-    local function handleWheel(_, delta)
-        setOffset(panel.offset + (delta < 0 and 1 or -1))
-    end
+    row.name = self:CreateButton(row, "", 170, 24)
+    row.name:SetPoint("LEFT", 64, 0)
+    bindRuleWheel(row.name, panel)
+    row.name:SetScript("OnClick", function(button)
+        local rule = WKM:FindRule(button.ruleId)
+        if rule then WKM:LoadRuleIntoEditor(rule) end
+    end)
+
+    row.expr = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.expr:SetPoint("LEFT", 240, 0)
+    row.expr:SetWidth(475)
+    row.expr:SetJustifyH("LEFT")
+    row.expr:SetWordWrap(false)
+
+    row.del = self:CreateButton(row, "删除", 58, 22)
+    row.del:SetPoint("RIGHT", -4, 0)
+    bindRuleWheel(row.del, panel)
+    row.del:SetScript("OnClick", function(button)
+        if button.ruleId then WKM:ConfirmDeleteRule(button.ruleId) end
+    end)
+
+    panel.rows[index] = row
+    return row
+end
+
+function WKM:CreateRulesPanel(panel)
+    panel.rows = {}
 
     local nameLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     nameLabel:SetPoint("TOPLEFT", 8, -8)
@@ -355,100 +398,97 @@ function WKM:CreateRulesPanel(panel)
     header:SetPoint("TOPLEFT", 8, -134)
     header:SetText("状态        名称                       表达式")
 
-    for i = 1, ROWS do
-        local row = CreateFrame("Frame", nil, panel)
-        row:SetHeight(38)
-        row:SetPoint("TOPLEFT", 4, -154 - (i - 1) * 38)
-        row:SetPoint("RIGHT", -28, 0)
-        row:EnableMouseWheel(true)
-        row:SetScript("OnMouseWheel", handleWheel)
+    panel.ruleScroll = CreateFrame("ScrollFrame", nil, panel)
+    panel.ruleScroll:SetPoint("TOPLEFT", 4, -154)
+    panel.ruleScroll:SetPoint("BOTTOMRIGHT", -30, 34)
+    panel.ruleScroll:EnableMouse(true)
+    bindRuleWheel(panel.ruleScroll, panel)
 
-        row.switch = WKM:CreateToggleSwitch(row, true, function(value, self)
-            if self.ruleId then WKM:UpdateRule(self.ruleId, nil, nil, value) end
-        end)
-        row.switch:SetPoint("LEFT", 2, 0)
-        row.switch:EnableMouseWheel(true)
-        row.switch:SetScript("OnMouseWheel", handleWheel)
+    panel.ruleScrollChild = CreateFrame("Frame", nil, panel.ruleScroll)
+    panel.ruleScrollChild:SetSize(760, 1)
+    panel.ruleScroll:SetScrollChild(panel.ruleScrollChild)
 
-        row.name = WKM:CreateButton(row, "", 170, 24)
-        row.name:SetPoint("LEFT", 64, 0)
-        row.name:EnableMouseWheel(true)
-        row.name:SetScript("OnMouseWheel", handleWheel)
-        row.name:SetScript("OnClick", function(self)
-            local rule = WKM:FindRule(self.ruleId)
-            if rule then WKM:LoadRuleIntoEditor(rule) end
-        end)
-
-        row.expr = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        row.expr:SetPoint("LEFT", 240, 0)
-        row.expr:SetWidth(493)
-        row.expr:SetJustifyH("LEFT")
-        row.expr:SetWordWrap(false)
-
-        row.del = WKM:CreateButton(row, "删除", 58, 22)
-        row.del:SetPoint("RIGHT", -4, 0)
-        row.del:EnableMouseWheel(true)
-        row.del:SetScript("OnMouseWheel", handleWheel)
-        row.del:SetScript("OnClick", function(self)
-            if self.ruleId then WKM:ConfirmDeleteRule(self.ruleId) end
-        end)
-
-        panel.rows[i] = row
+    panel.ruleScrollBar = CreateFrame("Slider", nil, panel)
+    panel.ruleScrollBar:SetOrientation("VERTICAL")
+    panel.ruleScrollBar:SetPoint("TOPRIGHT", -7, -154)
+    panel.ruleScrollBar:SetPoint("BOTTOMRIGHT", -7, 34)
+    panel.ruleScrollBar:SetWidth(16)
+    panel.ruleScrollBar:SetMinMaxValues(0, 0)
+    panel.ruleScrollBar:SetValue(0)
+    panel.ruleScrollBar:SetValueStep(ROW_H)
+    if panel.ruleScrollBar.SetObeyStepOnDrag then
+        panel.ruleScrollBar:SetObeyStepOnDrag(false)
     end
 
-    panel.scrollBar = CreateFrame("Slider", nil, panel, "UIPanelScrollBarTemplate")
-    panel.scrollBar:SetPoint("TOPRIGHT", -6, -154)
-    panel.scrollBar:SetPoint("BOTTOMRIGHT", -6, 34)
-    panel.scrollBar:SetMinMaxValues(0, maxOffset())
-    panel.scrollBar:SetValueStep(1)
-    if panel.scrollBar.SetObeyStepOnDrag then
-        panel.scrollBar:SetObeyStepOnDrag(true)
+    local track = panel.ruleScrollBar:CreateTexture(nil, "BACKGROUND")
+    track:SetAllPoints()
+    track:SetTexture("Interface\\Buttons\\WHITE8x8")
+    track:SetVertexColor(0.12, 0.12, 0.12, 0.75)
+
+    panel.ruleScrollBar:SetThumbTexture("Interface\\Buttons\\WHITE8x8")
+    local thumb = panel.ruleScrollBar:GetThumbTexture()
+    if thumb then
+        thumb:SetSize(12, 36)
+        thumb:SetVertexColor(0.55, 0.55, 0.55, 0.95)
     end
-    panel.scrollBar:SetValue(0)
-    panel.scrollBar:SetScript("OnValueChanged", function(_, value)
-        local offset = math.floor((tonumber(value) or 0) + 0.5)
-        if offset ~= panel.offset then
-            panel.offset = offset
-            WKM:RefreshRulesUI()
+
+    panel.ruleScrollBar:SetScript("OnValueChanged", function(_, value)
+        panel.ruleScroll:SetVerticalScroll(value or 0)
+    end)
+
+    panel.ruleScroll:SetScript("OnVerticalScroll", function(_, offset)
+        if panel.ruleScrollBar and panel.ruleScrollBar:GetValue() ~= offset then
+            panel.ruleScrollBar:SetValue(offset)
         end
     end)
 
-    panel:EnableMouseWheel(true)
-    panel:SetScript("OnMouseWheel", handleWheel)
-
-    panel.SetRuleScrollOffset = setOffset
-
     self:InstallRuleLinkHook()
     self:BeginNewRule()
+    self:RefreshRulesUI(true)
 end
 
 function WKM:RefreshRulesUI(reset)
     if not self.mainFrame then return end
     local panel = self.mainFrame.rulesPanel
-    if reset then panel.offset = 0 end
-    local maxOffset = math.max(0, #self.DB.rules - ROWS)
-    panel.offset = math.min(panel.offset or 0, maxOffset)
+    if not panel or not panel.ruleScroll or not panel.ruleScrollChild then return end
 
-    if panel.scrollBar then
-        panel.scrollBar:SetMinMaxValues(0, maxOffset)
-        panel.scrollBar:SetShown(maxOffset > 0)
-        if panel.scrollBar:GetValue() ~= panel.offset then
-            panel.scrollBar:SetValue(panel.offset)
-        end
+    local rules = self.DB.rules or {}
+
+    for i, rule in ipairs(rules) do
+        local row = panel.rows[i] or self:CreateRuleRow(panel, i)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 0, -((i - 1) * ROW_H))
+        row:SetPoint("RIGHT", -4, 0)
+        row:Show()
+
+        row.switch.ruleId = rule.id
+        self:SetToggleState(row.switch, rule.enabled)
+
+        row.name.ruleId = rule.id
+        row.name:SetText(rule.name)
+
+        row.expr:SetText(rule.expression)
+        row.del.ruleId = rule.id
     end
 
-    for i, row in ipairs(panel.rows) do
-        local rule = self.DB.rules[panel.offset + i]
-        if rule then
-            row:Show()
-            row.switch.ruleId = rule.id
-            WKM:SetToggleState(row.switch, rule.enabled)
-            row.name.ruleId = rule.id
-            row.name:SetText(rule.name)
-            row.expr:SetText(rule.expression)
-            row.del.ruleId = rule.id
-        else
-            row:Hide()
-        end
+    for i = #rules + 1, #panel.rows do
+        panel.rows[i]:Hide()
     end
+
+    local viewportHeight = math.max(1, panel.ruleScroll:GetHeight() or 1)
+    local viewportWidth = math.max(1, panel.ruleScroll:GetWidth() or 1)
+    local contentHeight = math.max(viewportHeight, #rules * ROW_H)
+
+    panel.ruleScrollChild:SetWidth(viewportWidth)
+    panel.ruleScrollChild:SetHeight(contentHeight)
+    panel.ruleScroll:UpdateScrollChildRect()
+
+    local maxScroll = math.max(0, contentHeight - viewportHeight)
+    panel.ruleScrollBar:SetMinMaxValues(0, maxScroll)
+    panel.ruleScrollBar:SetShown(maxScroll > 0)
+
+    local current = reset and 0 or (panel.ruleScroll:GetVerticalScroll() or 0)
+    current = math.max(0, math.min(maxScroll, current))
+    panel.ruleScroll:SetVerticalScroll(current)
+    panel.ruleScrollBar:SetValue(current)
 end
