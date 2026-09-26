@@ -410,6 +410,8 @@ function WKM:CreateRulesPanel(panel)
 
     panel.ruleScrollBar = CreateFrame("Slider", nil, panel)
     panel.ruleScrollBar:SetOrientation("VERTICAL")
+    panel.ruleScrollBar:EnableMouse(true)
+    bindRuleWheel(panel.ruleScrollBar, panel)
     panel.ruleScrollBar:SetPoint("TOPRIGHT", -7, -154)
     panel.ruleScrollBar:SetPoint("BOTTOMRIGHT", -7, 34)
     panel.ruleScrollBar:SetWidth(16)
