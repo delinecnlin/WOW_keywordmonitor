@@ -1,6 +1,6 @@
 WOWKeywordMonitor = WOWKeywordMonitor or {}
 local WKM = WOWKeywordMonitor
-local ROW_H = 38
+local ROW_H = 30
 local trim
 local setStatus
 
@@ -313,8 +313,8 @@ end
 
 function WKM:CreateRuleRow(panel, index)
     local row = CreateFrame("Frame", nil, panel)
-    row:SetHeight(38)
-    row:SetPoint("TOPLEFT", 4, -154 - (index - 1) * 38)
+    row:SetHeight(ROW_H)
+    row:SetPoint("TOPLEFT", 4, -154 - (index - 1) * ROW_H)
     row:SetPoint("RIGHT", -4, 0)
     bindRuleWheel(row)
 
