@@ -108,7 +108,7 @@ function WKM:ShowTab(tabName)
         self:MarkRead()
         if self.RefreshHistoryUI then self:RefreshHistoryUI(true) end
     elseif self.RefreshRulesUI then
-        self:RefreshRulesUI(true)
+        self:RefreshRulesUI()
     end
 end
 
