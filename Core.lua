@@ -96,7 +96,7 @@ function WKM:AddRule(name, expression)
         enabled = true,
     }
     self.DB.nextRuleId = self.DB.nextRuleId + 1
-    table.insert(self.DB.rules, rule)
+    table.insert(self.DB.rules, 1, rule)
     self.Rules.ClearCache()
     if self.RefreshRulesUI then self:RefreshRulesUI() end
     return true, rule
