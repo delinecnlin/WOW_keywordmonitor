@@ -214,8 +214,8 @@ function WKM:SaveRuleEditor()
             return
         end
         self:LoadRuleIntoEditor(result)
-        panel.offset = math.max(0, #self.DB.rules - ROWS)
-        if panel.scrollBar then panel.scrollBar:SetValue(panel.offset) end
+        panel.offset = 0
+        if panel.scrollBar then panel.scrollBar:SetValue(0) end
         self:RefreshRulesUI()
         setStatus(panel, "新规则已创建", "ff66ff99")
         return
