@@ -214,8 +214,9 @@ function WKM:SaveRuleEditor()
             return
         end
         self:LoadRuleIntoEditor(result)
+        panel.page = 1
         self:RefreshRulesUI(true)
-        setStatus(panel, "新规则已创建", "ff66ff99")
+        setStatus(panel, "新规则已创建，已排到第 1 页最上方", "ff66ff99")
         return
     end
 
@@ -277,35 +278,45 @@ StaticPopupDialogs["WKM_CONFIRM_RULE_DELETE"] = {
     preferredIndex = 3,
 }
 
-function WKM:ScrollRulesByWheel(panel, delta)
-    if not panel or not panel.ruleScroll then return end
-    local scrollFrame = panel.ruleScroll
-    local maxScroll = scrollFrame:GetVerticalScrollRange() or 0
-    local current = scrollFrame:GetVerticalScroll() or 0
-    local step = ROW_H * 2
-    local target = current - (delta * step)
-    target = math.max(0, math.min(maxScroll, target))
+local RULES_PER_PAGE = 9
 
-    scrollFrame:SetVerticalScroll(target)
-    if panel.ruleScrollBar then
-        panel.ruleScrollBar:SetValue(target)
-    end
+function WKM:GetRulePageCount()
+    local total = #(self.DB.rules or {})
+    return math.max(1, math.ceil(total / RULES_PER_PAGE))
 end
 
-local function bindRuleWheel(widget, panel)
+function WKM:SetRulePage(page)
+    local panel = self.mainFrame and self.mainFrame.rulesPanel
+    if not panel then return end
+
+    local pages = self:GetRulePageCount()
+    panel.page = math.max(1, math.min(pages, tonumber(page) or 1))
+    self:RefreshRulesUI()
+end
+
+function WKM:ChangeRulePage(delta)
+    local panel = self.mainFrame and self.mainFrame.rulesPanel
+    if not panel then return end
+    self:SetRulePage((panel.page or 1) + delta)
+end
+
+local function bindRuleWheel(widget)
     widget:EnableMouseWheel(true)
     widget:SetScript("OnMouseWheel", function(_, delta)
-        WKM:ScrollRulesByWheel(panel, delta)
+        if delta < 0 then
+            WKM:ChangeRulePage(1)
+        elseif delta > 0 then
+            WKM:ChangeRulePage(-1)
+        end
     end)
 end
 
 function WKM:CreateRuleRow(panel, index)
-    local parent = panel.ruleScrollChild
-    local row = CreateFrame("Frame", nil, parent)
-    row:SetHeight(ROW_H)
-    row:SetPoint("TOPLEFT", 0, -((index - 1) * ROW_H))
+    local row = CreateFrame("Frame", nil, panel)
+    row:SetHeight(38)
+    row:SetPoint("TOPLEFT", 4, -154 - (index - 1) * 38)
     row:SetPoint("RIGHT", -4, 0)
-    bindRuleWheel(row, panel)
+    bindRuleWheel(row)
 
     row.switch = self:CreateToggleSwitch(row, true, function(value, toggle)
         if toggle.ruleId then
@@ -313,11 +324,11 @@ function WKM:CreateRuleRow(panel, index)
         end
     end)
     row.switch:SetPoint("LEFT", 2, 0)
-    bindRuleWheel(row.switch, panel)
+    bindRuleWheel(row.switch)
 
     row.name = self:CreateButton(row, "", 170, 24)
     row.name:SetPoint("LEFT", 64, 0)
-    bindRuleWheel(row.name, panel)
+    bindRuleWheel(row.name)
     row.name:SetScript("OnClick", function(button)
         local rule = WKM:FindRule(button.ruleId)
         if rule then WKM:LoadRuleIntoEditor(rule) end
@@ -325,13 +336,13 @@ function WKM:CreateRuleRow(panel, index)
 
     row.expr = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.expr:SetPoint("LEFT", 240, 0)
-    row.expr:SetWidth(475)
+    row.expr:SetWidth(493)
     row.expr:SetJustifyH("LEFT")
     row.expr:SetWordWrap(false)
 
     row.del = self:CreateButton(row, "删除", 58, 22)
     row.del:SetPoint("RIGHT", -4, 0)
-    bindRuleWheel(row.del, panel)
+    bindRuleWheel(row.del)
     row.del:SetScript("OnClick", function(button)
         if button.ruleId then WKM:ConfirmDeleteRule(button.ruleId) end
     end)
@@ -342,6 +353,7 @@ end
 
 function WKM:CreateRulesPanel(panel)
     panel.rows = {}
+    panel.page = 1
 
     local nameLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     nameLabel:SetPoint("TOPLEFT", 8, -8)
@@ -392,58 +404,30 @@ function WKM:CreateRulesPanel(panel)
     help:SetPoint("TOPLEFT", 8, -110)
     help:SetWidth(800)
     help:SetJustifyH("LEFT")
-    help:SetText("支持 AND / OR / NOT / 括号；空格默认 AND。规则框获得焦点后可 Shift+点击任务/物品链接插入名称。")
+    help:SetText("支持 AND / OR / NOT / 括号；空格默认 AND。滚轮可翻页；规则框获得焦点后可 Shift+点击任务/物品链接。")
 
     local header = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     header:SetPoint("TOPLEFT", 8, -134)
     header:SetText("状态        名称                       表达式")
 
-    panel.ruleScroll = CreateFrame("ScrollFrame", nil, panel)
-    panel.ruleScroll:SetPoint("TOPLEFT", 4, -154)
-    panel.ruleScroll:SetPoint("BOTTOMRIGHT", -30, 34)
-    panel.ruleScroll:EnableMouse(true)
-    bindRuleWheel(panel.ruleScroll, panel)
-
-    panel.ruleScrollChild = CreateFrame("Frame", nil, panel.ruleScroll)
-    panel.ruleScrollChild:SetSize(760, 1)
-    panel.ruleScroll:SetScrollChild(panel.ruleScrollChild)
-
-    panel.ruleScrollBar = CreateFrame("Slider", nil, panel)
-    panel.ruleScrollBar:SetOrientation("VERTICAL")
-    panel.ruleScrollBar:EnableMouse(true)
-    bindRuleWheel(panel.ruleScrollBar, panel)
-    panel.ruleScrollBar:SetPoint("TOPRIGHT", -7, -154)
-    panel.ruleScrollBar:SetPoint("BOTTOMRIGHT", -7, 34)
-    panel.ruleScrollBar:SetWidth(16)
-    panel.ruleScrollBar:SetMinMaxValues(0, 0)
-    panel.ruleScrollBar:SetValue(0)
-    panel.ruleScrollBar:SetValueStep(ROW_H)
-    if panel.ruleScrollBar.SetObeyStepOnDrag then
-        panel.ruleScrollBar:SetObeyStepOnDrag(false)
+    for i = 1, RULES_PER_PAGE do
+        self:CreateRuleRow(panel, i)
     end
 
-    local track = panel.ruleScrollBar:CreateTexture(nil, "BACKGROUND")
-    track:SetAllPoints()
-    track:SetTexture("Interface\\Buttons\\WHITE8x8")
-    track:SetVertexColor(0.12, 0.12, 0.12, 0.75)
+    panel.prevPage = self:CreateButton(panel, "上一页", 72, 24)
+    panel.prevPage:SetPoint("BOTTOMLEFT", 8, 4)
+    panel.prevPage:SetScript("OnClick", function() WKM:ChangeRulePage(-1) end)
 
-    panel.ruleScrollBar:SetThumbTexture("Interface\\Buttons\\WHITE8x8")
-    local thumb = panel.ruleScrollBar:GetThumbTexture()
-    if thumb then
-        thumb:SetSize(12, 36)
-        thumb:SetVertexColor(0.55, 0.55, 0.55, 0.95)
-    end
+    panel.pageText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    panel.pageText:SetPoint("LEFT", panel.prevPage, "RIGHT", 12, 0)
+    panel.pageText:SetWidth(180)
+    panel.pageText:SetJustifyH("LEFT")
 
-    panel.ruleScrollBar:SetScript("OnValueChanged", function(_, value)
-        panel.ruleScroll:SetVerticalScroll(value or 0)
-    end)
+    panel.nextPage = self:CreateButton(panel, "下一页", 72, 24)
+    panel.nextPage:SetPoint("LEFT", panel.pageText, "RIGHT", 8, 0)
+    panel.nextPage:SetScript("OnClick", function() WKM:ChangeRulePage(1) end)
 
-    panel.ruleScroll:SetScript("OnVerticalScroll", function(_, offset)
-        if panel.ruleScrollBar and panel.ruleScrollBar:GetValue() ~= offset then
-            panel.ruleScrollBar:SetValue(offset)
-        end
-    end)
-
+    bindRuleWheel(panel)
     self:InstallRuleLinkHook()
     self:BeginNewRule()
     self:RefreshRulesUI(true)
@@ -452,45 +436,38 @@ end
 function WKM:RefreshRulesUI(reset)
     if not self.mainFrame then return end
     local panel = self.mainFrame.rulesPanel
-    if not panel or not panel.ruleScroll or not panel.ruleScrollChild then return end
+    if not panel then return end
+
+    if reset then panel.page = 1 end
 
     local rules = self.DB.rules or {}
+    local pages = self:GetRulePageCount()
+    panel.page = math.max(1, math.min(pages, panel.page or 1))
 
-    for i, rule in ipairs(rules) do
-        local row = panel.rows[i] or self:CreateRuleRow(panel, i)
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", 0, -((i - 1) * ROW_H))
-        row:SetPoint("RIGHT", -4, 0)
-        row:Show()
+    local startIndex = (panel.page - 1) * RULES_PER_PAGE + 1
 
-        row.switch.ruleId = rule.id
-        self:SetToggleState(row.switch, rule.enabled)
-
-        row.name.ruleId = rule.id
-        row.name:SetText(rule.name)
-
-        row.expr:SetText(rule.expression)
-        row.del.ruleId = rule.id
+    for i = 1, RULES_PER_PAGE do
+        local row = panel.rows[i]
+        local rule = rules[startIndex + i - 1]
+        if rule then
+            row:Show()
+            row.switch.ruleId = rule.id
+            self:SetToggleState(row.switch, rule.enabled)
+            row.name.ruleId = rule.id
+            row.name:SetText(rule.name)
+            row.expr:SetText(rule.expression)
+            row.del.ruleId = rule.id
+        else
+            row:Hide()
+            row.switch.ruleId = nil
+            row.name.ruleId = nil
+            row.del.ruleId = nil
+        end
     end
 
-    for i = #rules + 1, #panel.rows do
-        panel.rows[i]:Hide()
+    if panel.pageText then
+        panel.pageText:SetText(string.format("第 %d / %d 页 · 共 %d 条", panel.page, pages, #rules))
     end
-
-    local viewportHeight = math.max(1, panel.ruleScroll:GetHeight() or 1)
-    local viewportWidth = math.max(1, panel.ruleScroll:GetWidth() or 1)
-    local contentHeight = math.max(viewportHeight, #rules * ROW_H)
-
-    panel.ruleScrollChild:SetWidth(viewportWidth)
-    panel.ruleScrollChild:SetHeight(contentHeight)
-    panel.ruleScroll:UpdateScrollChildRect()
-
-    local maxScroll = math.max(0, contentHeight - viewportHeight)
-    panel.ruleScrollBar:SetMinMaxValues(0, maxScroll)
-    panel.ruleScrollBar:SetShown(maxScroll > 0)
-
-    local current = reset and 0 or (panel.ruleScroll:GetVerticalScroll() or 0)
-    current = math.max(0, math.min(maxScroll, current))
-    panel.ruleScroll:SetVerticalScroll(current)
-    panel.ruleScrollBar:SetValue(current)
+    if panel.prevPage then panel.prevPage:SetEnabled(panel.page > 1) end
+    if panel.nextPage then panel.nextPage:SetEnabled(panel.page < pages) end
 end
