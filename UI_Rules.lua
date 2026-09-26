@@ -214,6 +214,9 @@ function WKM:SaveRuleEditor()
             return
         end
         self:LoadRuleIntoEditor(result)
+        panel.offset = math.max(0, #self.DB.rules - ROWS)
+        if panel.scrollBar then panel.scrollBar:SetValue(panel.offset) end
+        self:RefreshRulesUI()
         setStatus(panel, "新规则已创建", "ff66ff99")
         return
     end
@@ -279,6 +282,24 @@ StaticPopupDialogs["WKM_CONFIRM_RULE_DELETE"] = {
 function WKM:CreateRulesPanel(panel)
     panel.offset, panel.rows = 0, {}
 
+    local function maxOffset()
+        return math.max(0, #WKM.DB.rules - ROWS)
+    end
+
+    local function setOffset(value)
+        local max = maxOffset()
+        local offset = math.floor((tonumber(value) or 0) + 0.5)
+        panel.offset = math.max(0, math.min(max, offset))
+        if panel.scrollBar and panel.scrollBar:GetValue() ~= panel.offset then
+            panel.scrollBar:SetValue(panel.offset)
+        end
+        WKM:RefreshRulesUI()
+    end
+
+    local function handleWheel(_, delta)
+        setOffset(panel.offset + (delta < 0 and 1 or -1))
+    end
+
     local nameLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     nameLabel:SetPoint("TOPLEFT", 8, -8)
     nameLabel:SetText("名称")
@@ -338,15 +359,21 @@ function WKM:CreateRulesPanel(panel)
         local row = CreateFrame("Frame", nil, panel)
         row:SetHeight(38)
         row:SetPoint("TOPLEFT", 4, -154 - (i - 1) * 38)
-        row:SetPoint("RIGHT", -4, 0)
+        row:SetPoint("RIGHT", -28, 0)
+        row:EnableMouseWheel(true)
+        row:SetScript("OnMouseWheel", handleWheel)
 
         row.switch = WKM:CreateToggleSwitch(row, true, function(value, self)
             if self.ruleId then WKM:UpdateRule(self.ruleId, nil, nil, value) end
         end)
         row.switch:SetPoint("LEFT", 2, 0)
+        row.switch:EnableMouseWheel(true)
+        row.switch:SetScript("OnMouseWheel", handleWheel)
 
         row.name = WKM:CreateButton(row, "", 170, 24)
         row.name:SetPoint("LEFT", 64, 0)
+        row.name:EnableMouseWheel(true)
+        row.name:SetScript("OnMouseWheel", handleWheel)
         row.name:SetScript("OnClick", function(self)
             local rule = WKM:FindRule(self.ruleId)
             if rule then WKM:LoadRuleIntoEditor(rule) end
@@ -360,6 +387,8 @@ function WKM:CreateRulesPanel(panel)
 
         row.del = WKM:CreateButton(row, "删除", 58, 22)
         row.del:SetPoint("RIGHT", -4, 0)
+        row.del:EnableMouseWheel(true)
+        row.del:SetScript("OnMouseWheel", handleWheel)
         row.del:SetScript("OnClick", function(self)
             if self.ruleId then WKM:ConfirmDeleteRule(self.ruleId) end
         end)
@@ -367,12 +396,27 @@ function WKM:CreateRulesPanel(panel)
         panel.rows[i] = row
     end
 
-    panel:EnableMouseWheel(true)
-    panel:SetScript("OnMouseWheel", function(_, delta)
-        local maxOffset = math.max(0, #WKM.DB.rules - ROWS)
-        panel.offset = math.max(0, math.min(maxOffset, panel.offset + (delta < 0 and 1 or -1)))
-        WKM:RefreshRulesUI()
+    panel.scrollBar = CreateFrame("Slider", nil, panel, "UIPanelScrollBarTemplate")
+    panel.scrollBar:SetPoint("TOPRIGHT", -6, -154)
+    panel.scrollBar:SetPoint("BOTTOMRIGHT", -6, 34)
+    panel.scrollBar:SetMinMaxValues(0, maxOffset())
+    panel.scrollBar:SetValueStep(1)
+    if panel.scrollBar.SetObeyStepOnDrag then
+        panel.scrollBar:SetObeyStepOnDrag(true)
+    end
+    panel.scrollBar:SetValue(0)
+    panel.scrollBar:SetScript("OnValueChanged", function(_, value)
+        local offset = math.floor((tonumber(value) or 0) + 0.5)
+        if offset ~= panel.offset then
+            panel.offset = offset
+            WKM:RefreshRulesUI()
+        end
     end)
+
+    panel:EnableMouseWheel(true)
+    panel:SetScript("OnMouseWheel", handleWheel)
+
+    panel.SetRuleScrollOffset = setOffset
 
     self:InstallRuleLinkHook()
     self:BeginNewRule()
@@ -382,7 +426,16 @@ function WKM:RefreshRulesUI(reset)
     if not self.mainFrame then return end
     local panel = self.mainFrame.rulesPanel
     if reset then panel.offset = 0 end
-    panel.offset = math.min(panel.offset or 0, math.max(0, #self.DB.rules - ROWS))
+    local maxOffset = math.max(0, #self.DB.rules - ROWS)
+    panel.offset = math.min(panel.offset or 0, maxOffset)
+
+    if panel.scrollBar then
+        panel.scrollBar:SetMinMaxValues(0, maxOffset)
+        panel.scrollBar:SetShown(maxOffset > 0)
+        if panel.scrollBar:GetValue() ~= panel.offset then
+            panel.scrollBar:SetValue(panel.offset)
+        end
+    end
 
     for i, row in ipairs(panel.rows) do
         local rule = self.DB.rules[panel.offset + i]
