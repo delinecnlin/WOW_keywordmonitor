@@ -24,14 +24,72 @@ local function classColor(classFile)
     return 1, 0.82, 0
 end
 
+function WKM:EnsureHistoryPreview()
+    if self.historyPreview then return self.historyPreview end
+
+    local tpl = BackdropTemplateMixin and "BackdropTemplate" or nil
+    local preview = CreateFrame("Frame", "WKM_HistoryMessagePreview", UIParent, tpl)
+    preview:SetFrameStrata("TOOLTIP")
+    preview:SetClampedToScreen(true)
+    preview:EnableMouse(false)
+    preview:SetSize(560, 70)
+    self:StylePanel(preview)
+
+    preview.text = preview:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    preview.text:SetPoint("TOPLEFT", 16, -14)
+    preview.text:SetPoint("RIGHT", -16, 0)
+    preview.text:SetJustifyH("LEFT")
+    preview.text:SetJustifyV("TOP")
+    preview.text:SetWordWrap(true)
+
+    preview:Hide()
+    self.historyPreview = preview
+    return preview
+end
+
 function WKM:ShowHistoryEntryTooltip(owner, entry)
     if not owner or not entry then return end
 
-    GameTooltip:Hide()
-    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
-    GameTooltip:ClearLines()
-    GameTooltip:AddLine(tostring(entry.message or ""), 1, 1, 1, true)
-    GameTooltip:Show()
+    local preview = self:EnsureHistoryPreview()
+    local text = self.Rules and self.Rules.Sanitize and self.Rules.Sanitize(entry.message) or tostring(entry.message or "")
+    preview.text:SetText(text)
+
+    local textHeight = preview.text:GetStringHeight() or 20
+    preview:SetHeight(math.max(54, textHeight + 30))
+
+    local x, y = GetCursorPosition()
+    local scale = UIParent:GetEffectiveScale()
+    x, y = x / scale, y / scale
+
+    preview:ClearAllPoints()
+    preview:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x + 18, y + 18)
+    preview:Show()
+end
+
+function WKM:HideHistoryEntryTooltip()
+    if self.historyPreview then
+        self.historyPreview:Hide()
+    end
+end
+
+local function isPointerOverRow(row)
+    if not row or not row:IsShown() then return false end
+
+    if MouseIsOver then
+        return MouseIsOver(row)
+    end
+
+    if row.IsMouseOver then
+        return row:IsMouseOver()
+    end
+
+    local left, right, top, bottom = row:GetLeft(), row:GetRight(), row:GetTop(), row:GetBottom()
+    if not left or not right or not top or not bottom then return false end
+
+    local x, y = GetCursorPosition()
+    local scale = row:GetEffectiveScale() or UIParent:GetEffectiveScale()
+    x, y = x / scale, y / scale
+    return x >= left and x <= right and y >= bottom and y <= top
 end
 
 function WKM:ShowCopyName(name)
@@ -221,7 +279,8 @@ function WKM:CreateHistoryPanel(panel)
         if not self:IsShown() then
             if self.hoveredRow then
                 self.hoveredRow = nil
-                GameTooltip:Hide()
+                self.hoveredEntry = nil
+                WKM:HideHistoryEntryTooltip()
             end
             return
         end
@@ -233,25 +292,21 @@ function WKM:CreateHistoryPanel(panel)
             local hovered = nil
             for _, row in ipairs(self.rows) do
                 if row:IsShown() and row.entry then
-                    local over = false
-                    if MouseIsOver then
-                        over = MouseIsOver(row)
-                    elseif row.IsMouseOver then
-                        over = row:IsMouseOver()
-                    end
-                    if over then
+                    if isPointerOverRow(row) then
                         hovered = row
                         break
                     end
                 end
             end
 
-            if hovered ~= self.hoveredRow then
+            local hoveredEntry = hovered and hovered.entry or nil
+            if hovered ~= self.hoveredRow or hoveredEntry ~= self.hoveredEntry then
                 self.hoveredRow = hovered
-                if hovered and hovered.entry then
-                    WKM:ShowHistoryEntryTooltip(hovered, hovered.entry)
+                self.hoveredEntry = hoveredEntry
+                if hovered and hoveredEntry then
+                    WKM:ShowHistoryEntryTooltip(hovered, hoveredEntry)
                 else
-                    GameTooltip:Hide()
+                    WKM:HideHistoryEntryTooltip()
                 end
             end
         end
