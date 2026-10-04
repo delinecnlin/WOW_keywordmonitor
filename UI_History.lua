@@ -27,20 +27,11 @@ end
 function WKM:ShowHistoryEntryTooltip(owner, entry)
     if not owner or not entry then return end
 
+    GameTooltip:Hide()
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
-    if GameTooltip.SetMinimumWidth then
-        GameTooltip:SetMinimumWidth(420)
-    end
-
-    GameTooltip:SetText(tostring(entry.message or ""), 1, 1, 1, true)
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(tostring(entry.message or ""), 1, 1, 1, true)
     GameTooltip:Show()
-end
-
-local function bindHistoryTooltip(widget)
-    widget:SetScript("OnEnter", function(self)
-        if self.entry then WKM:ShowHistoryEntryTooltip(self, self.entry) end
-    end)
-    widget:SetScript("OnLeave", GameTooltip_Hide)
 end
 
 function WKM:ShowCopyName(name)
@@ -156,18 +147,6 @@ function WKM:CreateHistoryPanel(panel)
         row:SetPoint("TOPLEFT", 4, -28 - (i - 1) * ROW_H)
         row:SetPoint("RIGHT", -4, 0)
 
-        row.hover = CreateFrame("Frame", nil, row)
-        row.hover:SetAllPoints(row)
-        row.hover:SetFrameLevel(row:GetFrameLevel() + 1)
-        row.hover:EnableMouse(true)
-        bindHistoryTooltip(row.hover)
-        row.hover:EnableMouseWheel(true)
-        row.hover:SetScript("OnMouseWheel", function(_, delta)
-            local max = math.max(0, #WKM.DB.history - ROWS)
-            panel.offset = math.max(0, math.min(max, panel.offset + (delta < 0 and 1 or -1)))
-            WKM:RefreshHistoryUI()
-        end)
-
         row.time = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.time:SetPoint("LEFT", 4, 0)
         row.time:SetWidth(72)
@@ -175,7 +154,6 @@ function WKM:CreateHistoryPanel(panel)
 
         row.sender = WKM:CreateButton(row, "", 112, 23)
         row.sender:SetPoint("LEFT", 78, 0)
-        row.sender:SetFrameLevel(row:GetFrameLevel() + 2)
         row.sender:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         row.sender:SetScript("OnClick", function(self, button)
             if button == "RightButton" then
@@ -184,7 +162,6 @@ function WKM:CreateHistoryPanel(panel)
                 whisper(self.player)
             end
         end)
-        bindHistoryTooltip(row.sender)
 
         row.rule = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.rule:SetPoint("LEFT", 195, 0)
@@ -205,22 +182,16 @@ function WKM:CreateHistoryPanel(panel)
         row.msg:SetWordWrap(false)
 
         row.pm = WKM:CreateButton(row, "密", 28, 22)
-        row.pm:SetFrameLevel(row:GetFrameLevel() + 2)
         row.pm:SetPoint("RIGHT", -68, 0)
         row.pm:SetScript("OnClick", function(self) whisper(self.player) end)
-        bindHistoryTooltip(row.pm)
 
         row.inv = WKM:CreateButton(row, "+", 28, 22)
-        row.inv:SetFrameLevel(row:GetFrameLevel() + 2)
         row.inv:SetPoint("RIGHT", -36, 0)
         row.inv:SetScript("OnClick", function(self) invite(self.player) end)
-        bindHistoryTooltip(row.inv)
 
         row.copy = WKM:CreateButton(row, "复", 28, 22)
-        row.copy:SetFrameLevel(row:GetFrameLevel() + 2)
         row.copy:SetPoint("RIGHT", -4, 0)
         row.copy:SetScript("OnClick", function(self) WKM:ShowCopyName(self.player) end)
-        bindHistoryTooltip(row.copy)
 
         panel.rows[i] = row
     end
@@ -244,8 +215,47 @@ function WKM:CreateHistoryPanel(panel)
     end)
 
     panel.tick = 0
+    panel.hoverCheck = 0
+    panel.hoveredRow = nil
     panel:SetScript("OnUpdate", function(self, elapsed)
-        if not self:IsShown() then return end
+        if not self:IsShown() then
+            if self.hoveredRow then
+                self.hoveredRow = nil
+                GameTooltip:Hide()
+            end
+            return
+        end
+
+        self.hoverCheck = self.hoverCheck + elapsed
+        if self.hoverCheck >= 0.05 then
+            self.hoverCheck = 0
+
+            local hovered = nil
+            for _, row in ipairs(self.rows) do
+                if row:IsShown() and row.entry then
+                    local over = false
+                    if MouseIsOver then
+                        over = MouseIsOver(row)
+                    elseif row.IsMouseOver then
+                        over = row:IsMouseOver()
+                    end
+                    if over then
+                        hovered = row
+                        break
+                    end
+                end
+            end
+
+            if hovered ~= self.hoveredRow then
+                self.hoveredRow = hovered
+                if hovered and hovered.entry then
+                    WKM:ShowHistoryEntryTooltip(hovered, hovered.entry)
+                else
+                    GameTooltip:Hide()
+                end
+            end
+        end
+
         self.tick = self.tick + elapsed
         if self.tick >= 5 then
             self.tick = 0
@@ -273,7 +283,6 @@ function WKM:RefreshHistoryUI(reset)
 
             row:Show()
             row.entry = e
-            row.hover.entry = e
             row.time:SetText(self:GetRelativeTime(e.timestamp))
 
             row.sender:SetText(e.sender or "?")
@@ -298,7 +307,6 @@ function WKM:RefreshHistoryUI(reset)
             row.copy.entry = e
         else
             row.entry = nil
-            row.hover.entry = nil
             row.sender.entry = nil
             row.pm.entry = nil
             row.inv.entry = nil
