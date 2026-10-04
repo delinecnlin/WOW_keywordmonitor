@@ -30,6 +30,10 @@ local function shortName(name)
     return tostring(name or ""):match("^([^-]+)") or tostring(name or "")
 end
 
+local function playerKey(name)
+    return tostring(name or ""):lower()
+end
+
 local function mergeUnique(target, values)
     local seen = {}
     for _, v in ipairs(target) do seen[tostring(v):lower()] = true end
@@ -73,6 +77,59 @@ function WKM:GetPlayerClassByGUID(guid)
     end
 
     return nil, nil
+end
+
+function WKM:IsBlacklisted(name)
+    if not self.DB or not self.DB.blacklistedPlayers then return false end
+    return self.DB.blacklistedPlayers[playerKey(name)] ~= nil
+end
+
+function WKM:AddToBlacklist(name)
+    if not self.DB or not name or name == "" then return false end
+    local key = playerKey(name)
+    if key == "" then return false end
+
+    self.DB.blacklistedPlayers[key] = {
+        name = name,
+        addedAt = time(),
+    }
+
+    local moved = 0
+    for i = #self.DB.history, 1, -1 do
+        local entry = self.DB.history[i]
+        if playerKey(entry.sender) == key then
+            table.remove(self.DB.history, i)
+            table.insert(self.DB.blacklistHistory, entry)
+            moved = moved + 1
+        end
+    end
+
+    while #self.DB.blacklistHistory > self.DB.settings.maxHistory do
+        table.remove(self.DB.blacklistHistory, 1)
+    end
+
+    self.DB.unread = math.min(self.DB.unread or 0, #self.DB.history)
+    if self.RefreshHistoryUI then self:RefreshHistoryUI() end
+    if self.RefreshBlacklistUI then self:RefreshBlacklistUI(true) end
+    if self.UpdateMinimapState then self:UpdateMinimapState() end
+    self:Print("已加入黑名单：" .. tostring(name))
+    return true, moved
+end
+
+function WKM:RemoveFromBlacklist(name)
+    if not self.DB or not name or name == "" then return false end
+    local key = playerKey(name)
+    if not self.DB.blacklistedPlayers[key] then return false end
+
+    self.DB.blacklistedPlayers[key] = nil
+    if self.RefreshBlacklistUI then self:RefreshBlacklistUI() end
+    self:Print("已移出黑名单：" .. tostring(name))
+    return true
+end
+
+function WKM:ClearBlacklistHistory()
+    self.DB.blacklistHistory = {}
+    if self.RefreshBlacklistUI then self:RefreshBlacklistUI(true) end
 end
 
 function WKM:FindRule(id)
@@ -193,6 +250,16 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
         matchedTerms = terms,
     }
     self.DB.nextMessageId = self.DB.nextMessageId + 1
+
+    if self:IsBlacklisted(sender) then
+        table.insert(self.DB.blacklistHistory, entry)
+        while #self.DB.blacklistHistory > self.DB.settings.maxHistory do
+            table.remove(self.DB.blacklistHistory, 1)
+        end
+        if self.RefreshBlacklistUI then self:RefreshBlacklistUI() end
+        return
+    end
+
     table.insert(self.DB.history, entry)
 
     while #self.DB.history > self.DB.settings.maxHistory do
@@ -211,20 +278,27 @@ function WKM:PruneExpiredHistory()
 
     local minutes = tonumber(self.DB.settings.autoDeleteMinutes) or 10
     local cutoff = time() - math.max(1, minutes) * 60
-    local history = self.DB.history
     local removed = 0
 
-    for i = #history, 1, -1 do
-        local entry = history[i]
-        if (entry.timestamp or 0) < cutoff then
-            table.remove(history, i)
-            removed = removed + 1
+    local function pruneList(list)
+        local count = 0
+        for i = #list, 1, -1 do
+            local entry = list[i]
+            if (entry.timestamp or 0) < cutoff then
+                table.remove(list, i)
+                count = count + 1
+            end
         end
+        return count
     end
 
+    removed = removed + pruneList(self.DB.history)
+    removed = removed + pruneList(self.DB.blacklistHistory)
+
     if removed > 0 then
-        self.DB.unread = math.min(self.DB.unread or 0, #history)
+        self.DB.unread = math.min(self.DB.unread or 0, #self.DB.history)
         if self.UpdateMinimapState then self:UpdateMinimapState() end
+        if self.RefreshBlacklistUI then self:RefreshBlacklistUI() end
     end
 
     return removed
@@ -260,6 +334,8 @@ local function initializeDB()
         minimapAngle = 225,
         rules = {},
         history = {},
+        blacklistedPlayers = {},
+        blacklistHistory = {},
         settings = {
             maxHistory = 200,
             dedupeSeconds = 8,
@@ -286,6 +362,9 @@ local function initializeDB()
 
     while #WKM.DB.history > WKM.DB.settings.maxHistory do
         table.remove(WKM.DB.history, 1)
+    end
+    while #WKM.DB.blacklistHistory > WKM.DB.settings.maxHistory do
+        table.remove(WKM.DB.blacklistHistory, 1)
     end
 
     WKM:PruneExpiredHistory()
