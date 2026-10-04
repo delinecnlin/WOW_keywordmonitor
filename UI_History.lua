@@ -235,9 +235,15 @@ function WKM:CreateHistoryPanel(panel)
 
         row.msg = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.msg:SetPoint("LEFT", 423, 0)
-        row.msg:SetWidth(285)
+        row.msg:SetWidth(250)
         row.msg:SetJustifyH("LEFT")
         row.msg:SetWordWrap(false)
+
+        row.blacklist = WKM:CreateButton(row, "黑", 28, 22)
+        row.blacklist:SetPoint("RIGHT", -100, 0)
+        row.blacklist:SetScript("OnClick", function(self)
+            if self.player then WKM:AddToBlacklist(self.player) end
+        end)
 
         row.pm = WKM:CreateButton(row, "密", 28, 22)
         row.pm:SetPoint("RIGHT", -68, 0)
@@ -354,6 +360,8 @@ function WKM:RefreshHistoryUI(reset)
             row.channel:SetText(e.channel or "?")
             row.msg:SetText(self.Rules.Highlight(e.message, e.matchedTerms))
 
+            row.blacklist.player = e.sender
+            row.blacklist.entry = e
             row.pm.player = e.sender
             row.inv.player = e.sender
             row.copy.player = e.sender
@@ -363,6 +371,8 @@ function WKM:RefreshHistoryUI(reset)
         else
             row.entry = nil
             row.sender.entry = nil
+            row.blacklist.player = nil
+            row.blacklist.entry = nil
             row.pm.entry = nil
             row.inv.entry = nil
             row.copy.entry = nil
