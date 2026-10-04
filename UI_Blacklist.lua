@@ -25,9 +25,10 @@ local function classColor(classFile)
 end
 
 local function blacklistCount()
-    local n = 0
-    for _ in pairs(WKM.DB.blacklistedPlayers or {}) do n = n + 1 end
-    return n
+    if WKM.GetNativeIgnoreCount then
+        return WKM:GetNativeIgnoreCount()
+    end
+    return 0
 end
 
 local function pointerOver(row)
@@ -210,7 +211,7 @@ function WKM:RefreshBlacklistUI(reset)
             row.msg:SetText(self.Rules.Highlight(e.message, e.matchedTerms))
 
             row.remove.player = e.sender
-            row.remove:SetEnabled(self:IsBlacklisted(e.sender))
+            row.remove:SetEnabled(self:IsBlacklisted(e.sender, e.guid))
             row.pm.player = e.sender
             row.inv.player = e.sender
             row.copy.player = e.sender
