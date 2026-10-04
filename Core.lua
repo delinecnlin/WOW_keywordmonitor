@@ -109,6 +109,7 @@ function WKM:AddToBlacklist(name)
     end
 
     self.DB.unread = math.min(self.DB.unread or 0, #self.DB.history)
+    self:PruneExpiredHistory()
     if self.RefreshHistoryUI then self:RefreshHistoryUI() end
     if self.RefreshBlacklistUI then self:RefreshBlacklistUI(true) end
     if self.UpdateMinimapState then self:UpdateMinimapState() end
