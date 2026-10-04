@@ -98,16 +98,25 @@ end
 
 function WKM:ShowTab(tabName)
     if not self.mainFrame then return end
-    local showHistory = tabName ~= "rules"
+
+    local showHistory = tabName == "history"
+    local showBlacklist = tabName == "blacklist"
+    local showRules = tabName == "rules"
+
     self.mainFrame.historyPanel:SetShown(showHistory)
-    self.mainFrame.rulesPanel:SetShown(not showHistory)
+    self.mainFrame.blacklistPanel:SetShown(showBlacklist)
+    self.mainFrame.rulesPanel:SetShown(showRules)
+
     self.mainFrame.historyTab:SetEnabled(not showHistory)
-    self.mainFrame.rulesTab:SetEnabled(showHistory)
+    self.mainFrame.blacklistTab:SetEnabled(not showBlacklist)
+    self.mainFrame.rulesTab:SetEnabled(not showRules)
 
     if showHistory then
         self:MarkRead()
         if self.RefreshHistoryUI then self:RefreshHistoryUI(true) end
-    elseif self.RefreshRulesUI then
+    elseif showBlacklist then
+        if self.RefreshBlacklistUI then self:RefreshBlacklistUI(true) end
+    elseif showRules and self.RefreshRulesUI then
         self:RefreshRulesUI()
     end
 end
@@ -195,6 +204,7 @@ function WKM:CreateMainWindow()
         if WKM.DB.settings.autoDeleteOldMessages then
             WKM:PruneExpiredHistory()
             if WKM.RefreshHistoryUI then WKM:RefreshHistoryUI(true) end
+            if WKM.RefreshBlacklistUI then WKM:RefreshBlacklistUI(true) end
         end
     end)
 
@@ -209,19 +219,28 @@ function WKM:CreateMainWindow()
     frame.historyTab:SetPoint("TOPLEFT", 22, -82)
     frame.historyTab:SetScript("OnClick", function() WKM:ShowTab("history") end)
 
+    frame.blacklistTab = self:CreateButton(frame, "黑名单消息", 120, 26)
+    frame.blacklistTab:SetPoint("LEFT", frame.historyTab, "RIGHT", 6, 0)
+    frame.blacklistTab:SetScript("OnClick", function() WKM:ShowTab("blacklist") end)
+
     frame.rulesTab = self:CreateButton(frame, "规则设置", 110, 26)
-    frame.rulesTab:SetPoint("LEFT", frame.historyTab, "RIGHT", 6, 0)
+    frame.rulesTab:SetPoint("LEFT", frame.blacklistTab, "RIGHT", 6, 0)
     frame.rulesTab:SetScript("OnClick", function() WKM:ShowTab("rules") end)
 
     frame.historyPanel = CreateFrame("Frame", nil, frame)
     frame.historyPanel:SetPoint("TOPLEFT", 18, -115)
     frame.historyPanel:SetPoint("BOTTOMRIGHT", -18, 18)
 
+    frame.blacklistPanel = CreateFrame("Frame", nil, frame)
+    frame.blacklistPanel:SetPoint("TOPLEFT", 18, -115)
+    frame.blacklistPanel:SetPoint("BOTTOMRIGHT", -18, 18)
+
     frame.rulesPanel = CreateFrame("Frame", nil, frame)
     frame.rulesPanel:SetPoint("TOPLEFT", 18, -115)
     frame.rulesPanel:SetPoint("BOTTOMRIGHT", -18, 18)
 
     if self.CreateHistoryPanel then self:CreateHistoryPanel(frame.historyPanel) end
+    if self.CreateBlacklistPanel then self:CreateBlacklistPanel(frame.blacklistPanel) end
     if self.CreateRulesPanel then self:CreateRulesPanel(frame.rulesPanel) end
 
     frame:SetScript("OnShow", function()
