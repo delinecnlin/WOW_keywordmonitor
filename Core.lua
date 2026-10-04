@@ -30,10 +30,6 @@ local function shortName(name)
     return tostring(name or ""):match("^([^-]+)") or tostring(name or "")
 end
 
-local function playerKey(name)
-    return tostring(name or ""):lower()
-end
-
 local function mergeUnique(target, values)
     local seen = {}
     for _, v in ipairs(target) do seen[tostring(v):lower()] = true end
@@ -79,25 +75,61 @@ function WKM:GetPlayerClassByGUID(guid)
     return nil, nil
 end
 
-function WKM:IsBlacklisted(name)
-    if not self.DB or not self.DB.blacklistedPlayers then return false end
-    return self.DB.blacklistedPlayers[playerKey(name)] ~= nil
+function WKM:IsBlacklisted(name, guid)
+    if not C_FriendList then return false end
+
+    if guid and guid ~= "" and C_FriendList.IsIgnoredByGuid then
+        local ok, ignored = pcall(C_FriendList.IsIgnoredByGuid, guid)
+        if ok and ignored then return true end
+    end
+
+    if name and name ~= "" and C_FriendList.IsIgnored then
+        local ok, ignored = pcall(C_FriendList.IsIgnored, name)
+        if ok and ignored then return true end
+
+        local short = shortName(name)
+        if short ~= name then
+            ok, ignored = pcall(C_FriendList.IsIgnored, short)
+            if ok and ignored then return true end
+        end
+    end
+
+    return false
+end
+
+function WKM:GetNativeIgnoreCount()
+    if not C_FriendList or not C_FriendList.GetNumIgnores then return 0 end
+    local ok, count = pcall(C_FriendList.GetNumIgnores)
+    if ok then return tonumber(count) or 0 end
+    return 0
 end
 
 function WKM:AddToBlacklist(name)
-    if not self.DB or not name or name == "" then return false end
-    local key = playerKey(name)
-    if key == "" then return false end
+    if not name or name == "" then return false end
+    if not C_FriendList or not C_FriendList.AddIgnore then
+        self:Print("当前客户端不支持原生黑名单 API")
+        return false
+    end
 
-    self.DB.blacklistedPlayers[key] = {
-        name = name,
-        addedAt = time(),
-    }
+    local alreadyIgnored = self:IsBlacklisted(name)
+    local ok, added = pcall(C_FriendList.AddIgnore, name)
+    if not ok then
+        self:Print("加入 WoW 原生黑名单失败：" .. tostring(added))
+        return false
+    end
 
+    if added == false and not alreadyIgnored and not self:IsBlacklisted(name) then
+        self:Print("未能加入 WoW 原生黑名单，可能已达到系统上限")
+        return false
+    end
+
+    local target = tostring(name):lower()
+    local targetShort = shortName(name):lower()
     local moved = 0
     for i = #self.DB.history, 1, -1 do
         local entry = self.DB.history[i]
-        if playerKey(entry.sender) == key then
+        local sender = tostring(entry.sender or "")
+        if sender:lower() == target or shortName(sender):lower() == targetShort then
             table.remove(self.DB.history, i)
             table.insert(self.DB.blacklistHistory, entry)
             moved = moved + 1
@@ -113,19 +145,44 @@ function WKM:AddToBlacklist(name)
     if self.RefreshHistoryUI then self:RefreshHistoryUI() end
     if self.RefreshBlacklistUI then self:RefreshBlacklistUI(true) end
     if self.UpdateMinimapState then self:UpdateMinimapState() end
-    self:Print("已加入黑名单：" .. tostring(name))
+
+    if alreadyIgnored then
+        self:Print("该玩家已在 WoW 原生黑名单：" .. tostring(name))
+    else
+        self:Print("已加入 WoW 原生黑名单：" .. tostring(name))
+    end
     return true, moved
 end
 
 function WKM:RemoveFromBlacklist(name)
-    if not self.DB or not name or name == "" then return false end
-    local key = playerKey(name)
-    if not self.DB.blacklistedPlayers[key] then return false end
+    if not name or name == "" then return false end
+    if not C_FriendList or not C_FriendList.DelIgnore then
+        self:Print("当前客户端不支持原生黑名单 API")
+        return false
+    end
 
-    self.DB.blacklistedPlayers[key] = nil
+    local ok, removed = pcall(C_FriendList.DelIgnore, name)
+    if not ok then
+        self:Print("移出 WoW 原生黑名单失败：" .. tostring(removed))
+        return false
+    end
+
+    if not removed and self:IsBlacklisted(name) then
+        local short = shortName(name)
+        if short ~= name then
+            ok, removed = pcall(C_FriendList.DelIgnore, short)
+        end
+    end
+
     if self.RefreshBlacklistUI then self:RefreshBlacklistUI() end
-    self:Print("已移出黑名单：" .. tostring(name))
-    return true
+
+    if removed or not self:IsBlacklisted(name) then
+        self:Print("已移出 WoW 原生黑名单：" .. tostring(name))
+        return true
+    end
+
+    self:Print("未能移出 WoW 原生黑名单：" .. tostring(name))
+    return false
 end
 
 function WKM:ClearBlacklistHistory()
@@ -252,7 +309,7 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
     }
     self.DB.nextMessageId = self.DB.nextMessageId + 1
 
-    if self:IsBlacklisted(sender) then
+    if self:IsBlacklisted(sender, guid) then
         table.insert(self.DB.blacklistHistory, entry)
         while #self.DB.blacklistHistory > self.DB.settings.maxHistory do
             table.remove(self.DB.blacklistHistory, 1)
@@ -335,7 +392,6 @@ local function initializeDB()
         minimapAngle = 225,
         rules = {},
         history = {},
-        blacklistedPlayers = {},
         blacklistHistory = {},
         settings = {
             maxHistory = 200,
@@ -412,6 +468,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 
         initializeDB()
         eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
+        eventFrame:RegisterEvent("IGNORELIST_UPDATE")
         if WKM.CreateMainWindow then WKM:CreateMainWindow() end
         if WKM.CreateMinimapButton then WKM:CreateMinimapButton() end
 
@@ -419,6 +476,11 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         SLASH_WOWKEYWORDMONITOR2 = "/kwm"
         SlashCmdList["WOWKEYWORDMONITOR"] = handleSlash
         WKM:Print("已加载。/wkm 打开设置与匹配历史")
+        return
+    end
+
+    if event == "IGNORELIST_UPDATE" then
+        if WKM.RefreshBlacklistUI then WKM:RefreshBlacklistUI() end
         return
     end
 
