@@ -24,6 +24,46 @@ local function classColor(classFile)
     return 1, 0.82, 0
 end
 
+function WKM:ShowHistoryEntryTooltip(owner, entry)
+    if not owner or not entry then return end
+
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+    if GameTooltip.SetMinimumWidth then
+        GameTooltip:SetMinimumWidth(420)
+    end
+
+    local r, g, b = classColor(entry.classFile)
+    GameTooltip:SetText(entry.sender or "?", r, g, b)
+
+    if entry.className or entry.classFile then
+        GameTooltip:AddLine(entry.className or entry.classFile, 0.75, 0.75, 0.75)
+    end
+
+    local rules = table.concat(entry.ruleNames or {}, "、")
+    if rules == "" then rules = "?" end
+
+    GameTooltip:AddDoubleLine("频道", entry.channel or "?", 0.65, 0.85, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine("命中规则", rules, 0.65, 0.85, 1, 1, 1, 1)
+
+    local stamp = entry.timestamp and date("%Y-%m-%d %H:%M:%S", entry.timestamp) or "?"
+    GameTooltip:AddDoubleLine("时间", stamp, 0.65, 0.85, 1, 1, 1, 1)
+
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("完整消息", 1, 0.82, 0)
+    GameTooltip:AddLine(tostring(entry.message or ""), 1, 1, 1, true)
+
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("左键玩家名：密语   右键玩家名：更多操作", 0.4, 0.9, 1, true)
+    GameTooltip:Show()
+end
+
+local function bindHistoryTooltip(widget)
+    widget:SetScript("OnEnter", function(self)
+        if self.entry then WKM:ShowHistoryEntryTooltip(self, self.entry) end
+    end)
+    widget:SetScript("OnLeave", GameTooltip_Hide)
+end
+
 function WKM:ShowCopyName(name)
     if not self.copyFrame then
         local tpl = BackdropTemplateMixin and "BackdropTemplate" or nil
@@ -136,6 +176,8 @@ function WKM:CreateHistoryPanel(panel)
         row:SetHeight(ROW_H)
         row:SetPoint("TOPLEFT", 4, -28 - (i - 1) * ROW_H)
         row:SetPoint("RIGHT", -4, 0)
+        row:EnableMouse(true)
+        bindHistoryTooltip(row)
 
         row.time = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.time:SetPoint("LEFT", 4, 0)
@@ -152,17 +194,7 @@ function WKM:CreateHistoryPanel(panel)
                 whisper(self.player)
             end
         end)
-        row.sender:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetText(self.player or "?")
-            if self.className or self.classFile then
-                GameTooltip:AddLine(self.className or self.classFile, 0.8, 0.8, 0.8)
-            end
-            GameTooltip:AddLine("左键：密语", 0.4, 0.9, 1)
-            GameTooltip:AddLine("右键：玩家操作菜单", 0.4, 0.9, 1)
-            GameTooltip:Show()
-        end)
-        row.sender:SetScript("OnLeave", GameTooltip_Hide)
+        bindHistoryTooltip(row.sender)
 
         row.rule = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.rule:SetPoint("LEFT", 195, 0)
@@ -185,14 +217,17 @@ function WKM:CreateHistoryPanel(panel)
         row.pm = WKM:CreateButton(row, "密", 28, 22)
         row.pm:SetPoint("RIGHT", -68, 0)
         row.pm:SetScript("OnClick", function(self) whisper(self.player) end)
+        bindHistoryTooltip(row.pm)
 
         row.inv = WKM:CreateButton(row, "+", 28, 22)
         row.inv:SetPoint("RIGHT", -36, 0)
         row.inv:SetScript("OnClick", function(self) invite(self.player) end)
+        bindHistoryTooltip(row.inv)
 
         row.copy = WKM:CreateButton(row, "复", 28, 22)
         row.copy:SetPoint("RIGHT", -4, 0)
         row.copy:SetScript("OnClick", function(self) WKM:ShowCopyName(self.player) end)
+        bindHistoryTooltip(row.copy)
 
         panel.rows[i] = row
     end
@@ -244,12 +279,14 @@ function WKM:RefreshHistoryUI(reset)
             end
 
             row:Show()
+            row.entry = e
             row.time:SetText(self:GetRelativeTime(e.timestamp))
 
             row.sender:SetText(e.sender or "?")
             row.sender.player = e.sender
             row.sender.classFile = e.classFile
             row.sender.className = e.className
+            row.sender.entry = e
 
             local r, g, b = classColor(e.classFile)
             local fontString = row.sender:GetFontString()
@@ -262,7 +299,15 @@ function WKM:RefreshHistoryUI(reset)
             row.pm.player = e.sender
             row.inv.player = e.sender
             row.copy.player = e.sender
+            row.pm.entry = e
+            row.inv.entry = e
+            row.copy.entry = e
         else
+            row.entry = nil
+            row.sender.entry = nil
+            row.pm.entry = nil
+            row.inv.entry = nil
+            row.copy.entry = nil
             row:Hide()
         end
     end
