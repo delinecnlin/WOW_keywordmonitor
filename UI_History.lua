@@ -32,28 +32,7 @@ function WKM:ShowHistoryEntryTooltip(owner, entry)
         GameTooltip:SetMinimumWidth(420)
     end
 
-    local r, g, b = classColor(entry.classFile)
-    GameTooltip:SetText(entry.sender or "?", r, g, b)
-
-    if entry.className or entry.classFile then
-        GameTooltip:AddLine(entry.className or entry.classFile, 0.75, 0.75, 0.75)
-    end
-
-    local rules = table.concat(entry.ruleNames or {}, "、")
-    if rules == "" then rules = "?" end
-
-    GameTooltip:AddDoubleLine("频道", entry.channel or "?", 0.65, 0.85, 1, 1, 1, 1)
-    GameTooltip:AddDoubleLine("命中规则", rules, 0.65, 0.85, 1, 1, 1, 1)
-
-    local stamp = entry.timestamp and date("%Y-%m-%d %H:%M:%S", entry.timestamp) or "?"
-    GameTooltip:AddDoubleLine("时间", stamp, 0.65, 0.85, 1, 1, 1, 1)
-
-    GameTooltip:AddLine(" ")
-    GameTooltip:AddLine("完整消息", 1, 0.82, 0)
-    GameTooltip:AddLine(tostring(entry.message or ""), 1, 1, 1, true)
-
-    GameTooltip:AddLine(" ")
-    GameTooltip:AddLine("左键玩家名：密语   右键玩家名：更多操作", 0.4, 0.9, 1, true)
+    GameTooltip:SetText(tostring(entry.message or ""), 1, 1, 1, true)
     GameTooltip:Show()
 end
 
