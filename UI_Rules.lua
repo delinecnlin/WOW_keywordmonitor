@@ -1,6 +1,6 @@
 WOWKeywordMonitor = WOWKeywordMonitor or {}
 local WKM = WOWKeywordMonitor
-local ROW_H = 30
+local ROW_H = 28
 local trim
 local setStatus
 
@@ -321,6 +321,8 @@ function WKM:CreateRuleRow(panel, index)
     row.switch = self:CreateToggleSwitch(row, true, function(value, toggle)
         if toggle.ruleId then
             WKM:UpdateRule(toggle.ruleId, nil, nil, value)
+            panel.page = 1
+            WKM:RefreshRulesUI(true)
         end
     end)
     row.switch:SetPoint("LEFT", 2, 0)
