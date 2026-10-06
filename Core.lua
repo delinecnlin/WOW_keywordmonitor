@@ -196,6 +196,24 @@ function WKM:FindRule(id)
     end
 end
 
+function WKM:SortRulesByEnabled()
+    if not self.DB or not self.DB.rules then return end
+
+    local enabledRules, disabledRules = {}, {}
+    for _, rule in ipairs(self.DB.rules) do
+        if rule.enabled then
+            enabledRules[#enabledRules + 1] = rule
+        else
+            disabledRules[#disabledRules + 1] = rule
+        end
+    end
+
+    local sorted = {}
+    for _, rule in ipairs(enabledRules) do sorted[#sorted + 1] = rule end
+    for _, rule in ipairs(disabledRules) do sorted[#sorted + 1] = rule end
+    self.DB.rules = sorted
+end
+
 function WKM:AddRule(name, expression)
     name = (name or ""):match("^%s*(.-)%s*$")
     expression = (expression or ""):match("^%s*(.-)%s*$")
@@ -234,7 +252,10 @@ function WKM:UpdateRule(id, name, expression, enabled)
         rule.name = name
     end
 
-    if enabled ~= nil then rule.enabled = enabled and true or false end
+    if enabled ~= nil then
+        rule.enabled = enabled and true or false
+        self:SortRulesByEnabled()
+    end
     self.Rules.ClearCache()
     if self.RefreshRulesUI then self:RefreshRulesUI() end
     return true, rule
@@ -416,6 +437,8 @@ local function initializeDB()
         WKM.DB.nextRuleId = WKM.DB.nextRuleId + 1
         table.insert(WKM.DB.rules, rule)
     end
+
+    WKM:SortRulesByEnabled()
 
     while #WKM.DB.history > WKM.DB.settings.maxHistory do
         table.remove(WKM.DB.history, 1)
