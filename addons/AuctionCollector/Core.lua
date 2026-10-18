@@ -1,10 +1,27 @@
 local ADDON_NAME = ...
 local AC = CreateFrame("Frame")
+AuctionCollector = AuctionCollector or {}
+local API = AuctionCollector
 local pending = nil
 local lastQuery = nil
 local sequence = 0
 local MAX_SCANS = 80
 local LOTUS = "黑莲花"
+-- Only a subsequent /reload/login can confirm WoW has reloaded SavedVariables.
+local session = {
+    restoredCount = 0, restoredLatest = nil, newPages = 0,
+    status = "not_loaded", message = "插件尚未初始化", lastResult = nil,
+}
+
+local function refreshPanel()
+    if type(API.RefreshPanel) == "function" then API.RefreshPanel() end
+end
+
+local function setStatus(status, message)
+    session.status = status
+    session.message = message
+    refreshPanel()
+end
 
 local function say(message)
     if DEFAULT_CHAT_FRAME then
@@ -52,25 +69,30 @@ end
 
 local function beginPage(query, page)
     if not supported() then
+        setStatus("error", "客户端不支持 Legacy AH 查询接口")
         say("此客户端未检测到 Classic QueryAuctionItems API。请记录 /ac probe 结果；尚未支持 C_AuctionHouse。")
         return
     end
     if pending then
+        setStatus("pending", "上一次查询尚未返回，请勿连续触发")
         say("上一次查询仍在等待 AUCTION_ITEM_LIST_UPDATE。")
         return
     end
     if type(query) ~= "string" or #query > 63 then
+        setStatus("error", "无效的查询名称")
         say("查询名称必须是 63 字节以内的字符串。")
         return
     end
     page = tonumber(page) or 0
     if page < 0 or page ~= math.floor(page) then
+        setStatus("error", "页号必须是非负整数")
         say("页号必须是非负整数。")
         return
     end
     if type(CanSendAuctionQuery) == "function" then
         local ok, can = pcall(CanSendAuctionQuery)
         if not ok or not can then
+            setStatus("cooldown", "查询冷却中，本次未发送请求")
             say("客户端查询冷却中，未发送请求。")
             return
         end
@@ -81,15 +103,27 @@ local function beginPage(query, page)
         query = query, page = page, start_ms = (GetTime and GetTime() or 0) * 1000,
         started_at = now(), sequence = sequence,
     }
-    -- Query is always user-initiated. No timed retries, auto-clicks or auto-pagination.
+    -- Only this explicit user action submits a query. No unattended scanning.
+    pending = request
+    setStatus("pending", "正在等待：" .. query .. " 第 " .. tostring(page + 1) .. " 页")
     local ok, err = pcall(QueryAuctionItems, query, nil, nil, page, false, nil, false, true, nil)
     if not ok then
+        if pending == request then pending = nil end
+        setStatus("error", "查询失败：" .. tostring(err))
         say("客户端拒绝查询: " .. tostring(err))
         return
     end
-    pending = request
     lastQuery = query
     say("已发送人工查询： " .. query .. " 第 " .. tostring(page + 1) .. " 页，等待 AH 响应。")
+    if C_Timer and type(C_Timer.After) == "function" then
+        C_Timer.After(30, function()
+            if pending == request then
+                pending = nil
+                setStatus("error", "查询 30 秒未返回，未生成扫描数据")
+                say("查询超时；请检查 AH 窗口、API 或其他拍卖插件。")
+            end
+        end)
+    end
 end
 
 local function collect()
@@ -98,6 +132,7 @@ local function collect()
     pending = nil
     local ok, num, total = pcall(GetNumAuctionItems, "list")
     if not ok or type(num) ~= "number" then
+        setStatus("error", "读取拍卖行列表失败；本次未保存")
         say("无法获取拍卖行列表；本次未保存。")
         return
     end
@@ -153,9 +188,59 @@ local function collect()
     while #AuctionCollectorDB.scans > MAX_SCANS do
         table.remove(AuctionCollectorDB.scans, 1)
     end
+    session.newPages = session.newPages + 1
+    session.lastResult = scan
+    if #rows > 0 then
+        setStatus("captured", "已采集 " .. tostring(#rows) .. " 条挂单（内存，待写盘）")
+    else
+        setStatus("empty_result", "当前查询返回 0 条；空页已记录（不等于全服无货）")
+    end
     say("保存 " .. tostring(#rows) .. "/" .. tostring(num)
         .. " 行，总结果 " .. tostring(total or "?") .. "；卖家缺失 " .. tostring(missingOwner)
         .. "；仅本页，需 /reload 或正常登出落盘。")
+end
+
+-- Read-only public API for the optional in-game status window.
+function API.GetState()
+    initialize()
+    return {
+        status = session.status,
+        message = session.message,
+        pending = pending ~= nil,
+        restoredCount = session.restoredCount,
+        restoredLatest = session.restoredLatest,
+        newPages = session.newPages,
+        totalPages = #AuctionCollectorDB.scans,
+        maxPages = MAX_SCANS,
+        latest = AuctionCollectorDB.scans[#AuctionCollectorDB.scans],
+        lastResult = session.lastResult,
+        realm = getRealm(),
+        faction = faction(),
+        clientBuild = clientBuild(),
+        legacyAPIAvailable = supported(),
+        modernAPIAvailable = type(C_AuctionHouse) == "table",
+    }
+end
+
+API.ScanLotus = function() beginPage(LOTUS, 0) end
+API.ScanNext = function()
+    if not lastQuery then
+        setStatus("error", "请先扫描第一页，再手动选择下一页")
+        say("请先 /ac lotus")
+        return
+    end
+    initialize()
+    local last = AuctionCollectorDB.scans[#AuctionCollectorDB.scans]
+    local nextPage = 0
+    if last and last.query == lastQuery then nextPage = (last.page or 0) + 1 end
+    beginPage(lastQuery, nextPage)
+end
+API.Probe = function()
+    say("Legacy API " .. tostring(supported())
+        .. " / C_AuctionHouse " .. tostring(type(C_AuctionHouse) == "table")
+        .. " / Realm " .. tostring(getRealm())
+        .. " / Faction " .. tostring(faction()) .. " / Build " .. tostring(clientBuild()))
+    refreshPanel()
 end
 
 SLASH_AUCTIONCOLLECTOR1 = "/ac"
@@ -163,32 +248,28 @@ SLASH_AUCTIONCOLLECTOR2 = "/auctioncollector"
 SlashCmdList.AUCTIONCOLLECTOR = function(msg)
     local command, argument = tostring(msg or ""):match("^%s*(%S*)%s*(.-)%s*$")
     command = (command or ""):lower()
+    if command == "" or command == "ui" or command == "show" then
+        if type(API.TogglePanel) == "function" then API.TogglePanel() end
+        return
+    end
     if command == "probe" then
-        say("Legacy API " .. tostring(supported())
-            .. " / C_AuctionHouse " .. tostring(type(C_AuctionHouse) == "table")
-            .. " / Realm " .. tostring(getRealm())
-            .. " / Faction " .. tostring(faction()) .. " / Build " .. tostring(clientBuild()))
+        API.Probe()
         return
     end
     if command == "status" then
-        initialize()
-        say("快照页数 " .. tostring(#AuctionCollectorDB.scans)
-            .. " / " .. tostring(MAX_SCANS)
-            .. "；正在等待 " .. tostring(pending ~= nil)
-            .. "；历史保存需 /reload 或正常登出。")
+        local state = API.GetState()
+        say(state.message .. "；已从存档读回 " .. state.restoredCount
+            .. " 页、本次新增 " .. state.newPages
+            .. " 页、当前缓存 " .. state.totalPages .. "/" .. state.maxPages .. " 页。")
+        if type(API.ShowPanel) == "function" then API.ShowPanel() end
         return
     end
     if command == "lotus" or command == "scan" then
-        beginPage(LOTUS, 0)
+        API.ScanLotus()
         return
     end
     if command == "next" then
-        if not lastQuery then say("请先 /ac lotus"); return end
-        initialize()
-        local last = AuctionCollectorDB.scans[#AuctionCollectorDB.scans]
-        local nextPage = 0
-        if last and last.query == lastQuery then nextPage = (last.page or 0) + 1 end
-        beginPage(lastQuery, nextPage)
+        API.ScanNext()
         return
     end
     if command == "page" then
@@ -204,19 +285,33 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         say("为避免误删研究数据，暂不提供游戏内清空功能，请先导出并自行清理 SavedVariables。")
         return
     end
-    say("命令：/ac probe、/ac lotus、/ac next、/ac page N、/ac status")
+    say("命令：/ac 打开面板、/ac probe、/ac lotus、/ac next、/ac page N、/ac status")
 end
 
 AC:RegisterEvent("ADDON_LOADED")
 AC:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
 AC:RegisterEvent("AUCTION_HOUSE_CLOSED")
+AC:RegisterEvent("AUCTION_HOUSE_SHOW")
 AC:SetScript("OnEvent", function(self, event, arg)
     if event == "ADDON_LOADED" and arg == ADDON_NAME then
         initialize()
-        say("已加载（测试版）；在拍卖师窗口手动输入 /ac probe 或 /ac lotus。")
+        session.restoredCount = #AuctionCollectorDB.scans
+        session.restoredLatest = AuctionCollectorDB.scans[#AuctionCollectorDB.scans]
+        session.newPages = 0
+        if session.restoredCount > 0 then
+            setStatus("restored", "已从存档读回 " .. session.restoredCount .. " 页扫描数据")
+        else
+            setStatus("empty", "尚无存档数据；请打开拍卖行开始采集")
+        end
+        say("已加载。输入 /ac 打开状态面板。")
     elseif event == "AUCTION_ITEM_LIST_UPDATE" then
         collect()
+    elseif event == "AUCTION_HOUSE_SHOW" then
+        if type(API.ShowPanel) == "function" then API.ShowPanel() end
     elseif event == "AUCTION_HOUSE_CLOSED" then
-        pending = nil
+        if pending then
+            pending = nil
+            setStatus("error", "拍卖行已关闭，本次查询未保存")
+        end
     end
 end)
