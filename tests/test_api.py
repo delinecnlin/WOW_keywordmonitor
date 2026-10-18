@@ -14,6 +14,7 @@ class TestAPI(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory()
         os.environ["MARKET_DATA_DIR"] = cls.temp.name
         os.environ["AUCTION_API_TOKEN"] = "unit-test-token"
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services" / "market-analysis"))
         spec = importlib.util.spec_from_file_location(
             "auction_api", Path(__file__).resolve().parents[1] / "services" / "ingest-api" / "main.py"
         )
@@ -55,6 +56,16 @@ class TestAPI(unittest.TestCase):
         response = self.client.get("/api/research/gold-forecast", headers=self.auth)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model_result"]["status"], "insufficient_data")
+
+    def test_parquet_export(self):
+        exporter = Path(__file__).resolve().parents[1] / "services" / "ingest-api" / "export_parquet.py"
+        spec = importlib.util.spec_from_file_location("export_parquet", exporter)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["export_parquet"] = module
+        spec.loader.exec_module(module)
+        files = module.export(Path(self.temp.name))
+        self.assertEqual(len(files), 3)
+        self.assertTrue(all(p.stat().st_size > 0 for p in files))
 
     def test_gold_quote_manual(self):
         q = {"observed_at": 1790000000, "yuan_per_1000g": 64,
