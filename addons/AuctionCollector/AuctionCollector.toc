@@ -1,0 +1,10 @@
+## Interface: 11509
+## Title: AuctionCollector
+## Notes: Manual auction-house snapshots for market research (Classic Era / Hardcore)
+## Author: delinecnlin
+## Version: 0.2.0-alpha
+## SavedVariables: AuctionCollectorDB
+## DefaultState: Enabled
+
+Core.lua
+UI.lua

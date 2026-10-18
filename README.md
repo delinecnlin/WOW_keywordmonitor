@@ -1,223 +1,35 @@
-# WOW Keyword Monitor
+# WoW Addons & Market Research
 
-面向 **World of Warcraft Classic Era / Hardcore** 的聊天关键词监控插件。
+这是一个支持多个独立魔兽世界插件及配套市场研究服务的 Monorepo。原 `WOW Keyword Monitor`（0.3.2-alpha）已**逐文件按原 Blob 迁移**至 `addons/KeywordMonitor/`，无需修改原插件内部代码、SavedVariables 或聊天命令。
 
-当前版本：**0.3.2-alpha**。这是用于实际游戏测试规则写法和交互方式的第一版。
+| 子项目 | 路径 | 状态 |
+| --- | --- | --- |
+| WOW Keyword Monitor | `addons/KeywordMonitor/` | 现有关键词插件，`/wkm` |
+| AuctionCollector | `addons/AuctionCollector/` | 新增 AH 人工采集试验插件，`/ac` |
+| Mac Sync | `apps/mac-sync/` | SavedVariables 导入 |
+| Market API & Research | `services/` | 数据存储、市场研究、回归基线 |
+| Azure Global | `deploy/azure/` | 国际版 Azure 部署方案 |
 
-## 已实现
+## macOS 安装
 
-- 多条独立监听规则
-- 布尔表达式：`AND` / `OR` / `NOT` / 括号
-- 支持 `&&` / `||` / `!`
-- 连续关键词用空格连接时默认视为 `AND`
-- 双引号或单引号可表示包含空格的短语
-- 监听 `CHAT_MSG_CHANNEL`
-- 匹配消息历史，默认保存最近 200 条
-- 打开窗口后显示“刚刚 / N 秒前 / N 分钟前”等相对时间
-- 多条规则同时命中时只保存一条消息，并记录全部命中规则
-- 8 秒短时重复消息去重
-- 匹配关键词高亮
-- 屏幕中央大字提醒
-- 可关闭声音提醒 / 大字提醒
-- 匹配时可触发 macOS Dock 图标跳动 / Windows 任务栏闪烁
-- 小地图按钮 + 未读计数
-- 可选“自动删除 >10分钟”历史消息
-- 规则表达式输入框支持 Shift+点击任务、物品等游戏链接，自动插入纯名称
-- 玩家名按职业颜色显示
-- 左键点击发送者直接打开密语
-- 右键点击发送者打开玩家操作菜单（密语 / 邀请进组 / 复制名字）
-- “+”按钮邀请玩家
-- “复”按钮弹出可 Ctrl+C 的玩家名
-- 匹配消息右侧“黑”按钮直接调用 WoW 原生 Ignore List（`C_FriendList.AddIgnore`）
-- 黑名单状态完全以 WoW 原生 Ignore List 为准；插件不再维护第二套玩家黑名单
-- 黑名单页“移”直接调用 WoW 原生 `C_FriendList.DelIgnore`；黑名单消息与普通消息共用“自动删除 >10分钟”保留规则
-- SavedVariables 持久化规则、设置和历史记录
+**不再直接把整个仓库放入游戏 AddOns 目录。** 关闭游戏后运行：
 
-## 规则示例
-
-### 玛拉顿找 T，排除带刷
-
-```text
-MLD AND T AND NOT 带
+```bash
+bash scripts/install-macos.sh "/Applications/World of Warcraft/_classic_era_/Interface/AddOns"
 ```
 
-### 支持多个副本/职业写法
+请将路径替换为实际客户端安装路径。脚本只复制两套独立插件：`WOW_keywordmonitor` 与 `AuctionCollector`，并把旧目录备份为 `*.backup-时间戳`。不会修改 WTF/SavedVariables。也可手动把 `addons/KeywordMonitor` 复制到 `AddOns/WOW_keywordmonitor`，把 `addons/AuctionCollector` 复制到 `AddOns/AuctionCollector`。
 
-```text
-(MLD OR 玛拉顿 OR 玛拉) AND (T OR MT OR 坦 OR 坦克) AND NOT (带 OR 老板 OR 工作室)
-```
+回滚：关闭游戏，将备份的 `WOW_keywordmonitor.backup-...` 还原为 `WOW_keywordmonitor`；不要删除 WTF。原插件名称及 `WOWKeywordMonitorDB` 保持不变。
 
-### 多个排除词
+## AuctionMarket 第一阶段
 
-```text
-黑下 AND (治疗 OR 奶 OR 牧师) AND NOT (带 OR G团 OR 工作室)
-```
+**研究**国服硬核服（显示名“硬核服”）联盟黑莲花等商品的 AH 可见库存、角色级挂单集中度、补货、理论产能区间、工作室/组织化供应代理指标，并研究 7881 参考金价（人民币 / 1000 金）的时间关系。该阶段不执行交易，不声称 AH 挂单为实际成交，不从角色名推断真实玩家或工作室。
 
-### 空格默认 AND
+- 插件操作见 `addons/AuctionCollector/README.md`
+- 分析范围/局限见 `docs/auction-market/PRD.md`
+- 任务见 Issues #1–#5
 
-下面两条等价：
+## 重要限制
 
-```text
-MLD T NOT 带
-MLD AND T AND NOT 带
-```
-
-如果关键词本身包含空格，请加引号：
-
-```text
-"Blackrock Depths" AND healer
-```
-
-运算优先级：
-
-1. `NOT`
-2. `AND`
-3. `OR`
-
-复杂规则建议明确使用括号，避免歧义。
-
-## 安装
-
-### Git clone
-
-把仓库放到：
-
-```text
-World of Warcraft/_classic_era_/Interface/AddOns/WOW_keywordmonitor
-```
-
-目录内应直接看到：
-
-```text
-WOW_keywordmonitor.toc
-Core.lua
-Parser.lua
-Rules.lua
-...
-```
-
-### GitHub Download ZIP
-
-GitHub 下载后的目录通常叫：
-
-```text
-WOW_keywordmonitor-main
-```
-
-请先改名为：
-
-```text
-WOW_keywordmonitor
-```
-
-再放入 `Interface/AddOns`。
-
-当前 TOC Interface 为 `11509`，面向当前 Classic Era / Hardcore 客户端。若后续客户端补丁升级，可在游戏聊天框执行：
-
-```text
-/dump select(4, GetBuildInfo())
-```
-
-确认 Interface 版本。
-
-## 使用
-
-进入游戏后：
-
-```text
-/wkm
-```
-
-或：
-
-```text
-/kwm
-```
-
-打开插件窗口。
-
-窗口包含：
-
-- **匹配消息**：查看历史、相对时间、发件人、命中规则、频道和具体消息。鼠标悬停任意一行会显示插件自绘的完整消息正文预览浮层；右侧“黑”直接将玩家加入 WoW 原生 Ignore List。
-- **黑名单消息**：黑名单状态读取 WoW 原生 Ignore List；若客户端仍向插件派发该玩家的频道事件，则匹配记录会静默归档到此页，不触发声音、屏幕大字或 Dock/任务栏提醒；“移”直接从 WoW 原生 Ignore List 移除。
-- **规则设置**：新增、修改、启用/停用、删除规则。规则列表使用分页模式，每页 9 条；底部分页栏已预留固定空间，避免被最后一条规则遮挡；所有 ON 规则自动排在 OFF 规则之前，同状态内保持原有顺序；新建规则会直接排在第 1 页最上方。每条规则使用绿色 ON / 灰色 OFF 开关；修改已有规则时会二次确认；“撤销编辑”恢复当前已保存内容；“回退上次修改”可撤回最近一次已确认的规则修改。
-- **声音提醒**：全局开关。
-- **屏幕大字**：全局开关。
-- **Dock/任务栏提醒**：命中规则时触发 WoW 客户端图标提醒；macOS 为 Dock 图标跳动，Windows 为任务栏闪烁。默认开启。
-- **自动删除 >10分钟**：开启后，超过 10 分钟的匹配历史会自动清理。默认关闭。
-- **全局监听 ON/OFF**：绿色 ON 表示全局监听生效，灰色 OFF 表示暂停处理所有聊天匹配。
-
-### 命令
-
-```text
-/wkm
-/wkm on
-/wkm off
-/wkm clear
-/wkm test <聊天文本>
-```
-
-例如：
-
-```text
-/wkm test MLD 4=1 来T
-```
-
-会在聊天框告诉你当前哪些规则能够匹配这句话，非常适合调试规则。
-
-## 第一轮建议测试
-
-默认已经放入一条示例规则：
-
-```text
-(MLD OR 玛拉顿 OR 玛拉) AND (T OR MT OR 坦 OR 坦克) AND NOT (带 OR 老板 OR 工作室)
-```
-
-建议分别测试：
-
-```text
-MLD 4=1 来T
-玛拉顿缺坦克
-MLD带刷 来老板
-MLD 4=1 来FS
-```
-
-预期：
-
-- 前两条匹配
-- 第三条因为出现“带/老板”而排除
-- 第四条因为没有 T/坦相关关键词而不匹配
-
-## 当前限制
-
-- 第一版只监听客户端实际收到的 `CHAT_MSG_CHANNEL`。
-- WoW 原生 Ignore 可能在事件派发前就屏蔽消息；若客户端不再向插件派发被忽略玩家的 `CHAT_MSG_CHANNEL`，插件无法继续记录其后续黑名单消息。
-- 插件不能读取登录前的服务器历史聊天。
-- 未加入的频道无法监听。
-- “复制名字”受 WoW 插件安全模型限制，不能直接写入系统剪贴板，因此使用弹窗选中文本后 Ctrl+C。
-- 邀请和密语都由玩家主动点击触发，不做自动邀请或自动发言。
-- 当前没有“简单模式”；现阶段优先通过实际使用确定最合适的规则表达方式。
-- 当前没有按规则指定频道、单独提示音、单独冷却时间等高级设置，这些留到测试后决定。
-
-## 数据
-
-SavedVariables：
-
-```text
-WOWKeywordMonitorDB
-```
-
-默认保存：
-
-- 规则
-- 开关设置
-- 最近 200 条普通匹配历史
-- 最近 200 条黑名单匹配历史
-- 未读数量
-- 小地图按钮位置
-
-## 版权
-
-本项目采用 MIT License。
-
-本项目为独立实现。KeywordAlert 仅作为需求和行为参考；本仓库没有复制或重新发布 KeywordAlert 的源码、图标或其他受版权保护素材。
+国服实际 AH API 尚未在用户 Mac 客户端验证；若接口不兼容，插件应安全报错而非假装扫描成功。第三方挂牌金价不代表已成交价格。位面数与金价的历史对应关系目前是待核实的用户观察，不能直接作为因果推断。

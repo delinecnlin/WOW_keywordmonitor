@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AuctionMarket · 硬核服市场研究</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="layout">
+    <header class="top">
+      <div><p class="eyebrow">WOW CLASSIC · HARDCORE</p><h1>AuctionMarket</h1>
+        <p class="sub">黑莲花供需 · 可见大户挂单 · 金币人民币参考价</p></div>
+      <div class="connection"><input id="token" type="password" autocomplete="off" placeholder="输入只读/上传 API Token" aria-label="API Token" />
+        <button id="connect">连接数据</button><span id="status">未连接</span></div>
+    </header>
+    <section class="notice"><strong>研究数据限制：</strong>拍卖行分页挂单不是全服库存或真实成交，卖家角色不等于工作室。未观察到足够数据时，不生成市场规模或盈利结论。</section>
+    <section class="cards">
+      <article><span class="label">服务器 / 阵营</span><strong id="realm">—</strong><small>以客户端实测为准</small></article>
+      <article><span class="label">最新页黑莲花可见数量</span><strong id="lotusQty">—</strong><small>仅最后一次扫描页</small></article>
+      <article><span class="label">已知卖家数量覆盖</span><strong id="coverage">—</strong><small>只衡量扫描页卖家可见率</small></article>
+      <article><span class="label">7881 金价参考</span><strong id="gold">—</strong><small>元 / 1000 金，手工记录</small></article>
+    </section>
+    <section class="grid">
+      <article class="panel wide">
+        <div class="panelhead"><h2>黑莲花价格历史</h2><span>最新 300 次包含该商品的分页快照</span></div>
+        <svg id="chart" viewBox="0 0 780 230" role="img" aria-label="黑莲花最低买断单价快照趋势"></svg>
+        <div id="chartnote" class="muted">等待扫描数据</div>
+      </article>
+      <article class="panel">
+        <div class="panelhead"><h2>大户可见挂单</h2><span>单次扫描页</span></div>
+        <table id="sellers"><thead><tr><th>卖家角色</th><th>可见数量</th></tr></thead><tbody></tbody></table>
+        <p id="sellerNote" class="muted">角色名仅代表 AH 公开可见角色。</p>
+      </article>
+      <article class="panel">
+        <div class="panelhead"><h2>最新观察</h2><span>不将刷新页面等同新增产量</span></div>
+        <table id="items"><thead><tr><th>物品</th><th>可见量</th><th>最低单价（金币）</th></tr></thead><tbody></tbody></table>
+      </article>
+      <article class="panel">
+        <div class="panelhead"><h2>每日大户可见挂单</h2><span>不重复累计扫描数量</span></div>
+        <table id="sellerDaily"><thead><tr><th>日期</th><th>角色</th><th>同日最大可见数量</th></tr></thead><tbody></tbody></table>
+      </article>
+      <article class="panel">
+        <div class="panelhead"><h2>滚动金价预测实验</h2><span>至少 42 天连续匹配数据</span></div>
+        <p id="forecast" class="muted">尚无回归实验结果</p>
+        <p class="muted">与仅使用历史金价的模型比较增益；预测不代表因果或实际收益。</p>
+      </article>
+      <article class="panel wide">
+        <div class="panelhead"><h2>7881 手工金价参考</h2><span>仅观察挂牌价，不是成交价格</span></div>
+        <form id="quoteForm" class="quote">
+          <label>元 / 1000 金<input id="quotePrice" type="number" min="0.01" step="0.01" required placeholder="例如 64" /></label>
+          <label>可见深度（千金）<input id="quoteDepth" type="number" min="0" step="0.01" placeholder="未知则留空" /></label>
+          <label>备注<input id="quoteNotes" maxlength="400" placeholder="7881 页面匹配、价格档位等" /></label>
+          <button type="submit">保存当前观察</button>
+        </form>
+        <table id="goldTable"><thead><tr><th>时间</th><th>参考价</th><th>来源</th><th>备注</th></tr></thead><tbody></tbody></table>
+      </article>
+    </section>
+    <footer>First research MVP · 不能依靠少量分页数据判断工作室市场份额或操纵金币价格的因果关系。</footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

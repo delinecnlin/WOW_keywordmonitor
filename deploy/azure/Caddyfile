@@ -1,0 +1,15 @@
+{
+  email {$ACME_EMAIL}
+}
+{$MARKET_DOMAIN} {
+  encode gzip zstd
+  header {
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    X-Frame-Options "DENY"
+  }
+  @api path /api/*
+  reverse_proxy @api api:8000
+  root * /srv/www
+  file_server
+}
