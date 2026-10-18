@@ -27,5 +27,7 @@ jobs:
           find addons -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p
       - name: Exercise addon state transitions with WoW API mock
         run: lua5.1 tests/test_auction_collector.lua
+      - name: Smoke-test macOS addon installer and recovery
+        run: bash tests/test_install_macos.sh
       - name: Validate Azure Compose template
         run: docker compose --env-file deploy/azure/.env.example -f deploy/azure/docker-compose.yml config --quiet

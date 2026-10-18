@@ -140,33 +140,46 @@ local function collect()
     local invalid = 0
     local missingOwner = 0
     local missingInfo = 0
+    local mismatchedItem = false
     for index = 1, num do
         local success, name, _, count, _, _, _, _, minBid, minIncrement, buyout, currentBid,
             _, _, owner, ownerFullName, _, itemId, hasAllInfo =
             pcall(GetAuctionItemInfo, "list", index)
         if success and name then
-            local seller = copyString(ownerFullName) or copyString(owner)
-            if not seller then missingOwner = missingOwner + 1 end
-            if hasAllInfo == false then missingInfo = missingInfo + 1 end
-            local qty = tonumber(count) or 0
-            local buyoutCopper = tonumber(buyout) or 0
-            rows[#rows + 1] = {
-                index = index,
-                item_id = tonumber(itemId),
-                item_name = name,
-                quantity = qty,
-                buyout_copper = buyoutCopper,
-                unit_buyout_copper = (qty > 0 and buyoutCopper > 0) and math.floor(buyoutCopper / qty) or nil,
-                min_bid_copper = tonumber(minBid),
-                min_increment_copper = tonumber(minIncrement),
-                current_bid_copper = tonumber(currentBid),
-                seller_character = seller,
-                seller_missing = seller == nil,
-                has_all_info = hasAllInfo == true,
-            }
+            -- The legacy list-update event has no request ID. Fail closed if
+            -- another AH search replaced our requested item's result list.
+            if name ~= request.query then
+                mismatchedItem = true
+                invalid = invalid + 1
+            else
+                local seller = copyString(ownerFullName) or copyString(owner)
+                if not seller then missingOwner = missingOwner + 1 end
+                if hasAllInfo == false then missingInfo = missingInfo + 1 end
+                local qty = tonumber(count) or 0
+                local buyoutCopper = tonumber(buyout) or 0
+                rows[#rows + 1] = {
+                    index = index,
+                    item_id = tonumber(itemId),
+                    item_name = name,
+                    quantity = qty,
+                    buyout_copper = buyoutCopper,
+                    unit_buyout_copper = (qty > 0 and buyoutCopper > 0) and math.floor(buyoutCopper / qty) or nil,
+                    min_bid_copper = tonumber(minBid),
+                    min_increment_copper = tonumber(minIncrement),
+                    current_bid_copper = tonumber(currentBid),
+                    seller_character = seller,
+                    seller_missing = seller == nil,
+                    has_all_info = hasAllInfo == true,
+                }
+            end
         else
             invalid = invalid + 1
         end
+    end
+    if mismatchedItem then
+        setStatus("error", "AH 当前列表与请求物品不一致；本次未保存")
+        say("AH 结果列表中的物品与本次查询不一致，本次未保存；请关闭其他搜索后重试。")
+        return
     end
     local end_ms = (GetTime and GetTime() or 0) * 1000
     local scan = {

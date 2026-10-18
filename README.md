@@ -18,9 +18,11 @@
 bash scripts/install-macos.sh "/Applications/World of Warcraft/_classic_era_/Interface/AddOns"
 ```
 
-请将路径替换为实际客户端安装路径。脚本只复制两套独立插件：`WOW_keywordmonitor` 与 `AuctionCollector`，并把旧目录备份为 `*.backup-时间戳`。不会修改 WTF/SavedVariables。也可手动把 `addons/KeywordMonitor` 复制到 `AddOns/WOW_keywordmonitor`，把 `addons/AuctionCollector` 复制到 `AddOns/AuctionCollector`。
+请将路径替换为实际客户端安装路径。脚本会先检查并暂存两套独立插件，再替换 `WOW_keywordmonitor` 与 `AuctionCollector`；旧目录会保留为 `*.backup-时间戳-PID`。若源插件缺失或暂存失败，脚本会在替换现有目录前停止。不会修改 WTF/SavedVariables。也可手动把 `addons/KeywordMonitor` 复制到 `AddOns/WOW_keywordmonitor`，把 `addons/AuctionCollector` 复制到 `AddOns/AuctionCollector`。
 
-回滚：关闭游戏，将备份的 `WOW_keywordmonitor.backup-...` 还原为 `WOW_keywordmonitor`；不要删除 WTF。原插件名称及 `WOWKeywordMonitorDB` 保持不变。
+安装后启动游戏，在角色选择界面的「插件」列表确认两个插件都已加载；若提示过期插件，勾选「加载过期插件」。进入硬核服联盟角色，打开拍卖行并运行 `/ac probe`。记录服务器、阵营、客户端 build 和 Legacy API 状态。Legacy API 不可用时，插件会停止扫描；API 显示可用也不等于已经验证，需在实际国服客户端完成人工扫描和 `/reload` 读回流程，详见 [AuctionCollector 安装与验证](docs/auction-market/INSTALL-macos.md)。
+
+回滚：关闭游戏后，将当前 `WOW_keywordmonitor`、`AuctionCollector` 目录改名保留，再将对应的 `*.backup-时间戳-PID` 目录恢复为原目录名；不要删除 WTF。原插件名称及 `WOWKeywordMonitorDB` 保持不变。
 
 ## AuctionMarket 第一阶段
 

@@ -21,10 +21,11 @@
 
 1. 登录游戏、打开拍卖行，此时面板会自动出现。也可输入 `/ac`。
 2. 点击 **扫描黑莲花**。面板先显示「等待返回」，收到 AH 结果后显示「已采集 N 条（内存）」。必须确认挂单条数而不是仅看「已发送」。
-3. 若需完整查询结果，手动点击 **扫描下一页**。各页单独保存；请注意查询冷却及其他拍卖助手可能造成的冲突。
-4. 点击 **写盘并重载**，或正常退出游戏。该按钮等价于用户主动执行 `/reload`，不会自动扫 AH。
-5. 重新加载后面板应显示绿色「**已从存档读回 N 页扫描数据**」。这证明插件读回了 SavedVariables；**不代表已上传 Azure**。
-6. 若需要在 macOS 文件层面确认，检查 `World of Warcraft/_classic_era_/WTF/Account/<账号>/SavedVariables/AuctionCollector.lua` 中是否存在 `AuctionCollectorDB`、`scans` 和 `scan_id`。再运行 `apps/mac-sync/sync.py --dry-run` 检查解析条目。
+3. 等待查询返回期间不要在 AH 中发起其他搜索。Legacy 列表更新事件不带请求 ID；若当前结果中的物品名与本次查询不符，插件会拒绝保存。其他搜索若恰好查询相同物品，客户端仍无法证明分页来自哪次请求，因此应等待面板确认后再继续操作。
+4. 若需完整查询结果，手动点击 **扫描下一页**。各页单独保存；请注意查询冷却及其他拍卖助手可能造成的冲突。
+5. 点击 **写盘并重载**，或正常退出游戏。该按钮等价于用户主动执行 `/reload`，不会自动扫 AH。
+6. 重新加载后面板应显示绿色「**已从存档读回 N 页扫描数据**」。这证明插件读回了 SavedVariables；**不代表已上传 Azure**。
+7. 若需要在 macOS 文件层面确认，检查 `World of Warcraft/_classic_era_/WTF/Account/<账号>/SavedVariables/AuctionCollector.lua` 中是否存在 `AuctionCollectorDB`、`scans` 和 `scan_id`。再运行 `apps/mac-sync/sync.py --dry-run` 检查解析条目。
 
 **重要：WoW 插件自身无法直接读取或确认 Mac 文件系统上的文件，因此只会显示「数据在内存中」与「重载时从 SavedVariables 读回」，不会在首次扫描后冒充已落盘。**
 
