@@ -188,6 +188,7 @@ fire("AUCTION_ITEM_LIST_UPDATE")
 assert(AuctionCollector.GetState().totalPages==beforePages)
 
 -- The shared Legacy result list may be replaced by another AH search.
+scannedRows = 2
 resultItemName = "血色十字军"
 AuctionCollector.ScanLotus()
 fire("AUCTION_ITEM_LIST_UPDATE")
