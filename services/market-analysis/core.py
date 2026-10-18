@@ -104,8 +104,16 @@ def rolling_gold_price_test(
     if len(clean) < min_train + 12:
         return {"status": "insufficient_data", "required_daily_points": min_train + 12, "available": len(clean)}
     dates = [str(r["date"]) for r in clean]
-    if len(set(dates)) != len(dates) or any(len(d) != 10 for d in dates):
-        return {"status": "invalid_dates", "message": "Require unique daily YYYY-MM-DD observations"}
+    try:
+        from datetime import date, timedelta
+        parsed_dates = [date.fromisoformat(d) for d in dates]
+        if (len(set(parsed_dates)) != len(parsed_dates)
+                or any(d.isoformat() != original for d, original in zip(parsed_dates, dates))
+                or any(b - a != timedelta(days=1) for a, b in zip(parsed_dates, parsed_dates[1:]))):
+            return {"status": "invalid_dates", "message": "Require consecutive daily observations"}
+    except ValueError:
+        return {"status": "invalid_dates", "message": "Require YYYY-MM-DD dates"}
+
     if not all(all(r.get(k) is not None for k in cols) for r in clean):
         return {"status": "missing_features", "message": "Daily features must be complete"}
     matrix = np.array([[float(r[k]) for k in cols] for r in clean], dtype=float)
@@ -117,11 +125,11 @@ def rolling_gold_price_test(
     if len(actual) - min_train < 10:
         return {"status": "insufficient_test_period"}
     predicted: list[float] = []
+    gold_only: list[float] = []
     baseline: list[float] = []
     observed: list[float] = []
-    for test_i in range(min_train, len(actual)):
-        train_x = feature_rows[:test_i]
-        train_y = actual[:test_i]
+
+    def predict_ridge(train_x: Any, train_y: Any, next_x: Any) -> float:
         means = train_x.mean(axis=0)
         std = train_x.std(axis=0)
         std[std < 1e-9] = 1.0
@@ -130,17 +138,28 @@ def rolling_gold_price_test(
         penalty = np.eye(x.shape[1]) * alpha
         penalty[0, 0] = 0.0
         weights = np.linalg.solve(x.T @ x + penalty, x.T @ train_y)
-        x_test = np.concatenate([[1.0], (feature_rows[test_i] - means) / std])
-        predicted.append(float(x_test @ weights))
+        x_test = np.concatenate([[1.0], (next_x - means) / std])
+        return float(x_test @ weights)
+
+    for test_i in range(min_train, len(actual)):
+        train_x = feature_rows[:test_i]
+        train_y = actual[:test_i]
+        predicted.append(predict_ridge(train_x, train_y, feature_rows[test_i]))
+        gold_only.append(predict_ridge(train_x[:, :1], train_y, feature_rows[test_i, :1]))
         baseline.append(float(naive[test_i]))
         observed.append(float(actual[test_i]))
-    y, pred, base = np.array(observed), np.array(predicted), np.array(baseline)
+    y = np.array(observed)
+    pred = np.array(predicted)
+    base = np.array(baseline)
+    gold_pred = np.array(gold_only)
+
     def score(p: Any) -> dict:
         return {
             "mae": float(np.mean(np.abs(y - p))),
             "rmse": float(sqrt(np.mean((y - p) ** 2))),
             "direction_accuracy": float(np.mean(np.sign(p - base) == np.sign(y - base))),
         }
+
     return {
         "status": "ok",
         "scope": "one_step_out_of_sample",
@@ -148,7 +167,9 @@ def rolling_gold_price_test(
         "test_points": len(y),
         "from_date": dates[min_train + 1],
         "through_date": dates[-1],
-        "ridge": score(pred),
+        "ridge_with_lotus": score(pred),
+        "ridge_gold_only": score(gold_pred),
         "naive": score(base),
+        "lotus_incremental_mae_reduction": score(gold_pred)["mae"] - score(pred)["mae"],
         "warning": "预测增益不是因果证据；未模拟交易流动性、费用或可成交价。",
     }

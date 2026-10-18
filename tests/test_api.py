@@ -51,6 +51,11 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(sellers["known_fraction"], 2 / 5)
         self.assertEqual(sellers["coverage"], "single_page")
 
+    def test_forecast_insufficient(self):
+        response = self.client.get("/api/research/gold-forecast", headers=self.auth)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model_result"]["status"], "insufficient_data")
+
     def test_gold_quote_manual(self):
         q = {"observed_at": 1790000000, "yuan_per_1000g": 64,
              "realm": "硬核服", "faction": "Alliance", "source": "manual_7881_reference"}

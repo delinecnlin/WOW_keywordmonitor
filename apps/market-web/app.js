@@ -48,8 +48,8 @@ function plot(data) {
 async function refresh() {
   if(!state.token) {text("status","请输入 Token");return;}
   try {
-    const [overview,sellers,history,golds]=await Promise.all([
-      api("/api/overview"),api("/api/sellers"),api("/api/history?limit=300"),api("/api/gold-quotes?limit=30")
+    const [overview,sellers,history,golds,daily,forecast]=await Promise.all([
+      api("/api/overview"),api("/api/sellers"),api("/api/history?limit=300"),api("/api/gold-quotes?limit=30"),api("/api/seller-daily"),api("/api/research/gold-forecast")
     ]);
     text("status","已连接");
     if(overview.status==="ok") {
@@ -66,6 +66,16 @@ async function refresh() {
       fillTable("sellers",sellers.sellers || [],[x=>x.character,x=>x.visible_qty]);
       text("sellerNote","HHI(仅已知角色): "+(sellers.hhi_known_only?.toFixed(3)??"—")+"。不能判断真实账号或工作室身份。");
     }
+    fillTable("sellerDaily",(daily.records || []).slice(0,20),[
+      x=>x.day,x=>x.seller_character,x=>x.max_observed_page_qty
+    ]);
+    const r=forecast.model_result || {};
+    text("forecast",r.status==="ok" ?
+      "样本外测试 "+r.test_points+" 天；加入黑莲花的 MAE "+r.ridge_with_lotus.mae.toFixed(2)+
+      "，仅金价 MAE "+r.ridge_gold_only.mae.toFixed(2)+
+      "；加入黑莲花的误差改进 "+r.lotus_incremental_mae_reduction.toFixed(2)+" 元/千金。" :
+      "当前无法可靠预测：" + (r.status || "数据不足") +
+      "；已匹配 "+forecast.matched_daily_points+" 天数据。");
     plot(history.snapshots || []);
     text("gold",golds.quotes.length ? "¥"+Number(golds.quotes[0].yuan_per_1000g).toFixed(2) : "—");
     fillTable("goldTable",golds.quotes.slice(0,15),[

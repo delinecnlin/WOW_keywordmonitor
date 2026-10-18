@@ -269,3 +269,52 @@ def gold_quotes(limit: int = Query(default=200, ge=1, le=1000)) -> dict:
                 "caveat": "第三方挂牌观察不等于成交价格；未验证 7881 自动采集权限。"}
         finally:
             con.close()
+
+@app.get("/api/research/gold-forecast", dependencies=[Depends(require_auth)])
+def gold_forecast(realm: str = Query(default="硬核服", max_length=100),
+                  faction: str = Query(default="Alliance", max_length=30)) -> dict:
+    """Daily matched observations; a strict lagged model requires 42+ consecutive days."""
+    from research_core import rolling_gold_price_test
+    with LOCK:
+        con = _db()
+        try:
+            ah = con.execute("""SELECT s.observed_at, s.scan_id,
+                SUM(l.quantity)::BIGINT, MIN(l.unit_buyout_copper)
+                FROM scans s JOIN listings l ON s.scan_id = l.scan_id
+                WHERE s.realm = ? AND s.faction = ? AND l.item_name = '黑莲花'
+                    AND l.unit_buyout_copper > 0
+                GROUP BY 1, 2 ORDER BY s.observed_at""", [realm, faction]).fetchall()
+            quotes = con.execute("""SELECT observed_at, yuan_per_1000g
+                FROM gold_quotes WHERE realm = ? AND faction = ?
+                ORDER BY observed_at""", [realm, faction]).fetchall()
+        finally:
+            con.close()
+
+    # Choose latest observed sample in each UTC day. Do not sum separate snapshots.
+    daily_ah: dict[str, tuple] = {}
+    for timestamp, scan_id, qty, unit_price in ah:
+        day = datetime.fromtimestamp(timestamp, tz=timezone.utc).date().isoformat()
+        daily_ah[day] = (float(unit_price), int(qty), str(scan_id))
+    daily_gold: dict[str, float] = {}
+    for timestamp, price in quotes:
+        day = datetime.fromtimestamp(timestamp, tz=timezone.utc).date().isoformat()
+        daily_gold[day] = float(price)
+    dates = sorted(set(daily_ah) & set(daily_gold))
+    daily = [{
+        "date": day,
+        "gold_yuan_per_1000g": daily_gold[day],
+        "lotus_unit_copper": daily_ah[day][0],
+        "lotus_visible_qty": daily_ah[day][1],
+    } for day in dates]
+    result = rolling_gold_price_test(daily)
+    return {
+        "realm": realm, "faction": faction,
+        "matched_daily_points": len(daily),
+        "model_result": result,
+        "caveats": [
+            "每天使用该日最后一次黑莲花页快照，不代表全服库存或成交价",
+            "金币手工报价仅是挂牌参考，非实际成交",
+            "严格前一日特征预测次日，未验证供给对金价的因果影响",
+            "黑莲花变量的增益需超过仅用历史金价的模型才有研究价值",
+        ],
+    }

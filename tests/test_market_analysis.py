@@ -34,6 +34,17 @@ class TestMarketResearch(unittest.TestCase):
         )
         self.assertEqual(x["positive_visible_changes"], 4)
 
+    def test_nonconsecutive_days_rejected(self):
+        from datetime import date, timedelta
+        data = [
+            {"date": str(date(2026, 1, 1) + timedelta(days=i if i < 20 else i + 1)),
+             "gold_yuan_per_1000g": 60 + i,
+             "lotus_unit_copper": 100000 + i * 10,
+             "lotus_visible_qty": 20 + i % 3}
+            for i in range(50)
+        ]
+        self.assertEqual(rolling_gold_price_test(data)["status"], "invalid_dates")
+
     def test_insufficient(self):
         x = rolling_gold_price_test([])
         self.assertEqual(x["status"], "insufficient_data")
@@ -50,7 +61,9 @@ class TestMarketResearch(unittest.TestCase):
         x = rolling_gold_price_test(data)
         self.assertEqual(x["status"], "ok")
         self.assertGreater(x["test_points"], 10)
-        self.assertGreaterEqual(x["ridge"]["mae"], 0)
+        self.assertGreaterEqual(x["ridge_with_lotus"]["mae"], 0)
+        self.assertIn("ridge_gold_only", x)
+        self.assertIn("lotus_incremental_mae_reduction", x)
 
 
 if __name__ == "__main__":

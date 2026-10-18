@@ -20,3 +20,13 @@ docker compose ps
 当前尚未部署真实 VM，`market.example.com` 是占位域名；请勿将其当作已上线网站。服务器端 `/api/health` 不需要认证，其余 API 请求需 Bearer Token。
 
 研究建议：先积累数周不同时间段 AH 样本，并验证客户端是否能提供卖家字段。当前只有逐页人工扫描，覆盖率不足以做全服推断。
+
+## Parquet 导出
+
+按需导出当前 DuckDB 表为 ZSTD Parquet，便于回测与离线研究：
+
+```bash
+docker compose exec api python /app/export_parquet.py
+```
+
+导出文件保存在 API 数据卷的 `/data/exports`。为防止边写边导出造成锁竞争，建议选择非采集时段操作；DuckDB 记录与压缩原始 JSON 是常态保存的主要数据源。重新部署 VM 时需单独备份数据卷。
