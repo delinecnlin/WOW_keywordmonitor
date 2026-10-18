@@ -136,6 +136,13 @@ local function collect()
         say("无法获取拍卖行列表；本次未保存。")
         return
     end
+    if num == 0 then
+        -- With no rows, the shared Legacy list cannot identify which query
+        -- produced the update, so show the result but do not persist it.
+        setStatus("empty_result", "AH 返回 0 条；无法核对查询归属，本次未保存")
+        say("AH 当前列表为 0 条；因无法核对查询归属，本次未保存空页。")
+        return
+    end
     local rows = {}
     local invalid = 0
     local missingOwner = 0
@@ -181,6 +188,11 @@ local function collect()
         say("AH 结果列表中的物品与本次查询不一致，本次未保存；请关闭其他搜索后重试。")
         return
     end
+    if #rows == 0 then
+        setStatus("error", "未能读取有效挂单；本次未保存")
+        say("列表有挂单但插件未能读取有效数据；本次未保存。")
+        return
+    end
     local end_ms = (GetTime and GetTime() or 0) * 1000
     local scan = {
         schema_version = 1,
@@ -203,11 +215,7 @@ local function collect()
     end
     session.newPages = session.newPages + 1
     session.lastResult = scan
-    if #rows > 0 then
-        setStatus("captured", "已采集 " .. tostring(#rows) .. " 条挂单（内存，待写盘）")
-    else
-        setStatus("empty_result", "当前查询返回 0 条；空页已记录（不等于全服无货）")
-    end
+    setStatus("captured", "已采集 " .. tostring(#rows) .. " 条挂单（内存，待写盘）")
     say("保存 " .. tostring(#rows) .. "/" .. tostring(num)
         .. " 行，总结果 " .. tostring(total or "?") .. "；卖家缺失 " .. tostring(missingOwner)
         .. "；仅本页，需 /reload 或正常登出落盘。")

@@ -123,12 +123,13 @@ AuctionCollector.ShowPanel()
 assert(anyText("存档读取成功"),"UI must show previous SavedVariables restored")
 assert(queryCount==count+1,"Plugin load should not scan")
 scannedRows=0
+local beforeEmptyPages = AuctionCollector.GetState().totalPages
 SlashCmdList.AUCTIONCOLLECTOR("lotus")
 fire("AUCTION_ITEM_LIST_UPDATE")
 state=AuctionCollector.GetState()
-assert(state.status=="empty_result" and state.newPages==1)
-assert(#state.latest.rows==0)
-assert(anyText("待写入磁盘"))
+assert(state.status=="empty_result" and state.newPages==0)
+assert(state.totalPages==beforeEmptyPages)
+assert(string.find(state.message, "本次未保存", 1, true))
 
 -- Every required Legacy capability is checked before a query can be queued.
 local legacy = {
