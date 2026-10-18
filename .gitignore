@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+.env
+*.duckdb
+*.parquet
+*.db
+*.jsonl
