@@ -58,6 +58,7 @@ function GetAuctionItemInfo(_,index)
         sellerNamesResolved and (index == 1 and "采集一" or "采集二") or nil,
         nil, 0, 13468, true
 end
+function GetAuctionItemTimeLeft(_,index) return index end
 function ReloadUI() _G.reloadInvoked=true end
 C_Timer={After=function(_,callback) callbacks[#callbacks + 1] = callback end}
 
@@ -110,9 +111,13 @@ assert(state.latest.rows[2].seller_character=="采集二")
 assert(state.latest.rows[1].item_id==13468)
 assert(state.latest.rows[1].buyout_copper==200000)
 assert(state.latest.rows[1].unit_buyout_copper==100000)
+assert(state.latest.rows[1].time_left_bucket==1 and state.latest.rows[2].time_left_bucket==2)
 assert(state.latest.complete==true)
 assert(state.latest.missing_owner_rows==0)
+assert(state.latest.time_left_api_available==true and state.latest.time_left_complete==true)
+assert(state.latest.missing_time_left_rows==0)
 assert(anyText("待写入磁盘"),"UI should warn data is still in memory")
+assert(anyText("时限档：2/2"),"UI should show expiry-bucket coverage")
 for _,callback in ipairs(callbacks) do callback() end
 assert(AuctionCollector.GetState().status=="captured", "Late timeout must not overwrite result")
 
@@ -152,7 +157,20 @@ state=AuctionCollector.GetState()
 assert(state.status=="captured" and state.newPages==1)
 assert(state.latest.complete==false and state.latest.seller_resolution_timed_out==true)
 assert(state.latest.missing_owner_rows==2 and #state.latest.rows==2)
+assert(state.latest.time_left_complete==true and state.latest.missing_time_left_rows==0)
 assert(queryCount==queryCountBeforeFallback, "Fallback must not send another AH search")
+
+-- The expiry bucket is optional; its absence must not block price/seller capture.
+local getTimeLeftAPI=GetAuctionItemTimeLeft
+GetAuctionItemTimeLeft=nil
+sellerNamesResolved=true
+SlashCmdList.AUCTIONCOLLECTOR("lotus")
+fire("AUCTION_ITEM_LIST_UPDATE")
+state=AuctionCollector.GetState()
+assert(state.status=="captured" and state.latest.complete==true)
+assert(state.latest.time_left_api_available==false and state.latest.time_left_complete==false)
+assert(state.latest.missing_time_left_rows==2 and state.latest.rows[1].time_left_bucket==nil)
+GetAuctionItemTimeLeft=getTimeLeftAPI
 
 -- Every required Legacy capability is checked before a query can be queued.
 local legacy = {

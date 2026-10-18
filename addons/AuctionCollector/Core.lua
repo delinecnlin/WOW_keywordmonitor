@@ -148,7 +148,10 @@ local function collect(forcePartialOwnerCapture)
     local rows = {}
     local invalid = 0
     local missingOwner = 0
+    local missingTimeLeft = 0
     local missingInfo = 0
+    local getTimeLeft = GetAuctionItemTimeLeft
+    local timeLeftAPIAvailable = type(getTimeLeft) == "function"
     local mismatchedItem = false
     for index = 1, num do
         local success, name, _, count, _, _, _, _, minBid, minIncrement, buyout, currentBid,
@@ -166,6 +169,18 @@ local function collect(forcePartialOwnerCapture)
                 if hasAllInfo == false then missingInfo = missingInfo + 1 end
                 local qty = tonumber(count) or 0
                 local buyoutCopper = tonumber(buyout) or 0
+                local timeLeftBucket
+                if timeLeftAPIAvailable then
+                    local timeLeftOk, value = pcall(getTimeLeft, "list", index)
+                    value = timeLeftOk and tonumber(value) or nil
+                    if value and value >= 1 and value <= 4 and value == math.floor(value) then
+                        timeLeftBucket = value
+                    else
+                        missingTimeLeft = missingTimeLeft + 1
+                    end
+                else
+                    missingTimeLeft = missingTimeLeft + 1
+                end
                 rows[#rows + 1] = {
                     index = index,
                     item_id = tonumber(itemId),
@@ -179,6 +194,7 @@ local function collect(forcePartialOwnerCapture)
                     seller_character = seller,
                     seller_missing = seller == nil,
                     has_all_info = hasAllInfo == true,
+                    time_left_bucket = timeLeftBucket,
                 }
             end
         else
@@ -224,6 +240,9 @@ local function collect(forcePartialOwnerCapture)
         coverage = "single_page",
         complete = invalid == 0 and missingOwner == 0 and missingInfo == 0 and #rows == num,
         invalid_rows = invalid, missing_owner_rows = missingOwner, missing_info_rows = missingInfo,
+        time_left_api_available = timeLeftAPIAvailable,
+        missing_time_left_rows = missingTimeLeft,
+        time_left_complete = missingTimeLeft == 0,
         seller_resolution_timed_out = forcePartialOwnerCapture == true and missingOwner > 0,
         duration_ms = math.max(0, math.floor(end_ms - request.start_ms)),
         rows = rows,
@@ -263,6 +282,7 @@ function API.GetState()
         clientBuild = clientBuild(),
         legacyAPIAvailable = supported(),
         modernAPIAvailable = type(C_AuctionHouse) == "table",
+        timeLeftAPIAvailable = type(GetAuctionItemTimeLeft) == "function",
     }
 end
 
@@ -281,6 +301,7 @@ API.ScanNext = function()
 end
 API.Probe = function()
     say("Legacy API " .. tostring(supported())
+        .. " / Auction item time-left API " .. tostring(type(GetAuctionItemTimeLeft) == "function")
         .. " / C_AuctionHouse " .. tostring(type(C_AuctionHouse) == "table")
         .. " / Realm " .. tostring(getRealm())
         .. " / Faction " .. tostring(faction()) .. " / Build " .. tostring(clientBuild()))

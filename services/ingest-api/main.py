@@ -29,13 +29,18 @@ def _db() -> duckdb.DuckDBPyConnection:
         scan_id VARCHAR PRIMARY KEY, observed_at BIGINT, realm VARCHAR, faction VARCHAR,
         query VARCHAR, page INTEGER, reported_total INTEGER, complete BOOLEAN,
         coverage VARCHAR, rows_count INTEGER, missing_owner_rows INTEGER,
+        time_left_api_available BOOLEAN, missing_time_left_rows INTEGER,
         raw_sha256 VARCHAR, ingested_at TIMESTAMP
     )""")
     con.execute("""CREATE TABLE IF NOT EXISTS listings (
         scan_id VARCHAR, listing_index INTEGER, item_id BIGINT, item_name VARCHAR,
         quantity BIGINT, buyout_copper BIGINT, unit_buyout_copper BIGINT,
-        seller_character VARCHAR
+        seller_character VARCHAR, time_left_bucket INTEGER
     )""")
+    # Additive migration for databases created before expiry-bucket capture.
+    con.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS time_left_api_available BOOLEAN")
+    con.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS missing_time_left_rows INTEGER")
+    con.execute("ALTER TABLE listings ADD COLUMN IF NOT EXISTS time_left_bucket INTEGER")
     con.execute("""CREATE TABLE IF NOT EXISTS gold_quotes (
         quote_id VARCHAR PRIMARY KEY, observed_at BIGINT, realm VARCHAR, faction VARCHAR,
         yuan_per_1000g DOUBLE, visible_depth_1000g DOUBLE,
@@ -75,6 +80,12 @@ async def ingest_scans(request: Request) -> dict:
             raise HTTPException(422, "Invalid observation time")
         if len(json.dumps(scan, ensure_ascii=False)) > 5_000_000:
             raise HTTPException(413, "Single scan too large")
+        for row in scan["rows"]:
+            if not isinstance(row, dict):
+                raise HTTPException(422, "Invalid listing row")
+            bucket = row.get("time_left_bucket")
+            if bucket is not None and (isinstance(bucket, bool) or not isinstance(bucket, int) or bucket not in (1, 2, 3, 4)):
+                raise HTTPException(422, "Invalid time_left_bucket")
 
     ids: list[str] = []
     added = 0
@@ -97,22 +108,31 @@ async def ingest_scans(request: Request) -> dict:
                     os.replace(temporary, raw)
                 con.execute("BEGIN TRANSACTION")
                 try:
-                    con.execute("""INSERT INTO scans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
+                    con.execute("""INSERT INTO scans (
+                        scan_id, observed_at, realm, faction, query, page, reported_total,
+                        complete, coverage, rows_count, missing_owner_rows,
+                        time_left_api_available, missing_time_left_rows, raw_sha256, ingested_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
                         scan_id, scan["observed_at"], str(scan.get("realm") or "UNKNOWN"),
                         str(scan.get("faction") or "UNKNOWN"), str(scan.get("query") or ""),
                         int(scan.get("page") or 0), scan.get("reported_total"),
                         bool(scan.get("complete")), str(scan.get("coverage") or "unknown"),
                         len(scan["rows"]), int(scan.get("missing_owner_rows") or 0),
+                        scan.get("time_left_api_available"), int(scan.get("missing_time_left_rows") or 0),
                         digest, datetime.now(timezone.utc),
                     ])
                     for row in scan["rows"]:
                         if not isinstance(row, dict):
                             raise ValueError("Invalid listing row")
-                        con.execute("INSERT INTO listings VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
+                        con.execute("""INSERT INTO listings (
+                            scan_id, listing_index, item_id, item_name, quantity,
+                            buyout_copper, unit_buyout_copper, seller_character, time_left_bucket
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
                             scan_id, int(row.get("index") or 0), row.get("item_id"),
                             str(row.get("item_name") or ""), int(row.get("quantity") or 0),
                             int(row.get("buyout_copper") or 0),
                             row.get("unit_buyout_copper"), row.get("seller_character"),
+                            row.get("time_left_bucket"),
                         ])
                     con.execute("COMMIT")
                 except Exception:
@@ -211,14 +231,23 @@ def history(item_name: str = Query(default="黑莲花", max_length=80), limit: i
         con = _db()
         try:
             rows = con.execute("""SELECT s.scan_id, s.observed_at, s.page, s.reported_total,
-                    s.complete, s.coverage, SUM(l.quantity)::BIGINT,
-                    MIN(CASE WHEN l.unit_buyout_copper > 0 THEN l.unit_buyout_copper END)
+                    s.complete, s.coverage, s.time_left_api_available, s.missing_time_left_rows,
+                    SUM(l.quantity)::BIGINT,
+                    MIN(CASE WHEN l.unit_buyout_copper > 0 THEN l.unit_buyout_copper END),
+                    COUNT(l.time_left_bucket)::INTEGER,
+                    SUM(CASE WHEN l.time_left_bucket = 1 THEN 1 ELSE 0 END)::INTEGER,
+                    SUM(CASE WHEN l.time_left_bucket = 2 THEN 1 ELSE 0 END)::INTEGER,
+                    SUM(CASE WHEN l.time_left_bucket = 3 THEN 1 ELSE 0 END)::INTEGER,
+                    SUM(CASE WHEN l.time_left_bucket = 4 THEN 1 ELSE 0 END)::INTEGER
                 FROM scans s JOIN listings l ON s.scan_id = l.scan_id
-                WHERE l.item_name = ? GROUP BY 1,2,3,4,5,6 ORDER BY s.observed_at DESC LIMIT ?""",
+                WHERE l.item_name = ? GROUP BY 1,2,3,4,5,6,7,8 ORDER BY s.observed_at DESC LIMIT ?""",
                 [item_name, limit]).fetchall()
             return {"item": item_name, "snapshots": [
                 dict(zip(("scan_id", "observed_at", "page", "reported_total", "complete",
-                          "coverage", "visible_qty", "min_unit_copper"), r)) for r in rows],
+                          "coverage", "time_left_api_available", "missing_time_left_rows",
+                          "visible_qty", "min_unit_copper", "time_left_known_rows",
+                          "time_left_bucket_1_rows", "time_left_bucket_2_rows",
+                          "time_left_bucket_3_rows", "time_left_bucket_4_rows"), r)) for r in rows],
                 "caveat": "分页快照不可直接加总为市场库存。"}
         finally:
             con.close()

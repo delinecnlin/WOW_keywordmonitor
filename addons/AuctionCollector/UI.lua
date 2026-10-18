@@ -129,15 +129,17 @@ local function scanStats(scan)
     local number = 0
     local quantity = 0
     local known = 0
+    local timeLeftKnown = 0
     local totalRows = scan and scan.rows
     if type(totalRows) == "table" then
         for _, row in ipairs(totalRows) do
             number = number + 1
             quantity = quantity + (tonumber(row.quantity) or 0)
             if row.seller_character and row.seller_character ~= "" then known = known + 1 end
+            if tonumber(row.time_left_bucket) then timeLeftKnown = timeLeftKnown + 1 end
         end
     end
-    return number, quantity, known
+    return number, quantity, known, timeLeftKnown
 end
 
 local COLOR = {
@@ -182,16 +184,17 @@ function API.RefreshPanel()
     local latest = state.latest
     recentTitle:SetText("|cff82bffd最近一次扫描|r")
     if latest then
-        local rows, quantity, known = scanStats(latest)
+        local rows, quantity, known, timeLeftKnown = scanStats(latest)
         latest1:SetText("采集时间：" .. clock(latest.observed_at)
             .. "   物品：" .. tostring(latest.query or "?")
             .. "   第 " .. tostring((tonumber(latest.page) or 0) + 1) .. " 页")
         latest2:SetText("本页挂单：|cffffffff" .. rows
             .. "|r 条    物品数量：|cffffffff" .. quantity
             .. "|r    AH 返回总条目：" .. tostring(latest.reported_total or "?"))
-        latest3:SetText("有卖家名：|cffffffff" .. known .. "/" .. rows
-            .. "|r    读取异常：" .. tostring(latest.invalid_rows or 0)
-            .. "    耗时：" .. tostring(latest.duration_ms or "?") .. " ms")
+        latest3:SetText("卖家名：|cffffffff" .. known .. "/" .. rows
+            .. "|r    时限档：|cffffffff" .. timeLeftKnown .. "/" .. rows
+            .. "|r    异常：" .. tostring(latest.invalid_rows or 0)
+            .. "    扫描：" .. tostring(latest.duration_ms or "?") .. " ms")
     else
         latest1:SetText("尚未取得任何扫描结果。")
         latest2:SetText("打开拍卖行，点击下方「扫描黑莲花」。")

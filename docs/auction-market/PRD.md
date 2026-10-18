@@ -15,7 +15,7 @@
 ## 数据源和采样
 
 - WoW 内人工指令触发 AH 查价，逐页、可查看/记录性能；严禁模拟点击和绕过 API 冷却。实际支持的 AH API、卖家字段、GetAll 模式需在客户端本机测试。
-- 原始快照：`scan_id`、`observed_at`、`realm`、`faction`、`client_build`、`query`、`page`、`count`、`total`、`rows`、`complete`、`quality`；每条行保留 `item_id`、`item_name`、`quantity`、`buyout_copper`、`seller_character`（如果 API 提供）及卖家缺失标记。
+- 原始快照：`scan_id`、`observed_at`、`realm`、`faction`、`client_build`、`query`、`page`、`count`、`total`、`rows`、`complete`、`quality`；每条行保留 `item_id`、`item_name`、`quantity`、`buyout_copper`、`seller_character`、可选 `time_left_bucket`（客户端可用时）及相应缺失标记。剩余时间仅为客户端分档，不是精确挂单时间；需真实客户端验证覆盖率。
 - 7881：用户链接 `https://h5.7881.com/pages/list/index-new?gameId=G6242&gtId=&extId=&extValue=&t=1792278012107`。先核实分类与平台使用限制，无法合规采集时导入手工 CSV，保存报价时间、深度、币种和手续费信息。
 - 社区或游戏机制资料：每个机制参数标记出处/日期，保留产能上下界，未经验证不硬编码某个地图刷新率。
 - 用户历史观察：2–3 位面约 ¥40/1000G；10 位面约 ¥120/1000G；7 位面约 ¥64/1000G。**仅为待核实报价观察**，没有精确日期，不用于无时间戳训练集。
@@ -33,6 +33,7 @@
 - `listing_value_copper = sum(buyout_copper)` 对全部可买断且价格>0的行计算；记录不支持买断的行占比。
 - `TopN` 和 `HHI` 以**扫描当时的可见挂单数量**计算，仅当可用卖家名称比例满足阈值时展示。
 - 以 seller-character、item、scan 组合建立可见供应时间序列；在没有稳定拍卖 ID 时不试图精确识别哪朵黑莲花被卖出。
+- 联合 `observed_at`、卖家角色与时限档位，最多估计挂单首次/末次可见时间和粗略到期窗口；不能据此精确推断上架时刻、真实账号、成交/撤单/流拍原因。
 - 理论产能模型：`layers × hourly_spawn_min/max × hours × capture_rate_min/max`，所有系数由带来源的情景输入，不作为真实产量。
 - 预测基线：naive、季节性 naive、岭回归或 ElasticNet（样本满足条件时）；严格时间递进训练/测试、滞后特征、模型与基线比较，报告 MAE、RMSE、方向准确率及误差区间。样本不足明确拒绝出预测。
 - 金价联动研究必须单独控制时间趋势、位面变动、活跃度与金币市场报价深度；只报告增量预测能力，不把关联结论写成价格影响因果。
