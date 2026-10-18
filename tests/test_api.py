@@ -14,7 +14,11 @@ class TestAPI(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory()
         os.environ["MARKET_DATA_DIR"] = cls.temp.name
         os.environ["AUCTION_API_TOKEN"] = "unit-test-token"
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services" / "market-analysis"))
+        research = Path(__file__).resolve().parents[1] / "services" / "market-analysis" / "core.py"
+        research_spec = importlib.util.spec_from_file_location("research_core", research)
+        research_module = importlib.util.module_from_spec(research_spec)
+        sys.modules["research_core"] = research_module
+        research_spec.loader.exec_module(research_module)
         spec = importlib.util.spec_from_file_location(
             "auction_api", Path(__file__).resolve().parents[1] / "services" / "ingest-api" / "main.py"
         )
