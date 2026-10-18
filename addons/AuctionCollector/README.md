@@ -1,25 +1,48 @@
-# AuctionCollector · 0.1.0-alpha
+# AuctionCollector · 0.2.0-alpha
 
-独立 WoW 插件，**仅人工命令触发**。安装目录必须为 `Interface/AddOns/AuctionCollector`，与 KeywordMonitor 不共用配置。
+独立 WoW 插件，只在玩家点击按钮或输入命令时请求拍卖行数据。安装路径为 `Interface/AddOns/AuctionCollector/`，和 `WOW_keywordmonitor` 共存，不共用 SavedVariables。
 
-在拍卖师处打开 AH 窗口，输入：
+## 🎮 游戏内状态面板
 
-- `/ac probe`：查看 Legacy AH API、C_AuctionHouse、服务器、阵营和客户端 Interface Build。
-- `/ac lotus`：**只查询黑莲花第一页**（要求客户端支持 `QueryAuctionItems`）。
-- `/ac next`：人工查询下一页，不能自动连续扫描。
-- `/ac page 2`：人工查询指定页，页码从 1 开始。
-- `/ac status`：查看已缓存页数和等待状态。
+**输入 `/ac` 即可打开/关闭**。打开拍卖师界面时，状态面板也会自动弹出；窗口可拖动、右上角可关闭。
 
-记录至 `AuctionCollectorDB` SavedVariables，最多保留 80 次分页快照。**只有 /reload 或正常登出后文件才会更新**。路径大致为：
+| 状态 | 面板颜色 | 含义 |
+|---|---|---|
+| 尚无扫描记录 | 灰色 | 没有从 SavedVariables 读回数据 |
+| 正在等待 | 黄色 | 已人工请求扫描，等待 AH 回调；不代表已采集成功 |
+| 扫描成功 · 数据在内存中 | 黄色 | 已收到挂单数据，但 **尚未写入 Mac 文件** |
+| 已从 SavedVariables 存档读回 | 绿色 | `/reload` 或再次登录后，插件已读取上次写入的数据 |
+| 查询返回 0 条 | 黄色 | 保存了一条空页观察，不证明全服无货 |
+| 查询失败、API 不可用、查询超时 | 红色 | 本次没有可用数据或请求未完成 |
 
-```text
-WTF/Account/<ACCOUNT>/SavedVariables/AuctionCollector.lua
-```
+面板持续显示：**本次新采集页数、上次登录/重载时读回存档页数、当前缓存页数、最后扫描时间、当前页挂单条数及数量、卖家名称可用率、查询耗时和最近三次扫描记录**。任一请求失败会在面板中显示原因。
 
-### 尚待验证
+### 正确的采集—落盘验证流程
 
-当前使用 Classic 的 Legacy `QueryAuctionItems`、`GetNumAuctionItems` 和 `GetAuctionItemInfo`。部分国服客户端可能使用不同 AH API，遇到不兼容时显示提示，**不发送查询、也不伪造数据**。卖家姓名可能无法解析；查询返回的 owner 为 nil 会记录缺失。第一页或某一页不是全市场扫描，模型必须检查 `coverage=single_page`。当前查询默认以物品中文名称精确匹配，尚未验证服务器是否返回预期结果。
+1. 登录游戏、打开拍卖行，此时面板会自动出现。也可输入 `/ac`。
+2. 点击 **扫描黑莲花**。面板先显示「等待返回」，收到 AH 结果后显示「已采集 N 条（内存）」。必须确认挂单条数而不是仅看「已发送」。
+3. 若需完整查询结果，手动点击 **扫描下一页**。各页单独保存；请注意查询冷却及其他拍卖助手可能造成的冲突。
+4. 点击 **写盘并重载**，或正常退出游戏。该按钮等价于用户主动执行 `/reload`，不会自动扫 AH。
+5. 重新加载后面板应显示绿色「**已从存档读回 N 页扫描数据**」。这证明插件读回了 SavedVariables；**不代表已上传 Azure**。
+6. 若需要在 macOS 文件层面确认，检查 `World of Warcraft/_classic_era_/WTF/Account/<账号>/SavedVariables/AuctionCollector.lua` 中是否存在 `AuctionCollectorDB`、`scans` 和 `scan_id`。再运行 `apps/mac-sync/sync.py --dry-run` 检查解析条目。
 
-一个扫描得到 0 行可能是正常无货、缓存未加载、查询失败或与其他 AH 插件冲突；测试时请记录聊天框提示及客户端 Build。若查询无结果，不应将其视为服务器没有黑莲花。
+**重要：WoW 插件自身无法直接读取或确认 Mac 文件系统上的文件，因此只会显示「数据在内存中」与「重载时从 SavedVariables 读回」，不会在首次扫描后冒充已落盘。**
 
-插件不读取游戏内存，不自动购买、交易、模拟输入、后台定时扫描或绕过查询冷却。原始快照可能包含游戏角色名，不应公开展示全量原始文件。
+## 其他命令
+
+- `/ac` 或 `/ac ui`：显示或隐藏状态面板
+- `/ac probe`：查看 Legacy API、C_AuctionHouse 是否存在、服务器、阵营及客户端 build
+- `/ac lotus`：人工扫描黑莲花第一页（Legacy `QueryAuctionItems`）
+- `/ac next`：人工查询下一页，不自动翻页
+- `/ac page 2`：手动查询指定页
+- `/ac status`：在聊天框和面板展示采集/存档状态
+
+SavedVariables 名称为 `AuctionCollectorDB`，最多保留最近 80 次分页快照；在云端导出前过多扫描可能让旧数据被覆盖，请及时同步。
+
+## 尚待国服实测
+
+当前采集器仍仅支持 Classic Legacy `QueryAuctionItems` / `GetAuctionItemInfo`。国服硬核服客户端若仅有新版 `C_AuctionHouse`，面板会提示 API 不兼容，而非声称扫描成功。卖家角色名只在游戏 API 返回时记录。拍卖行第一页或其他单个分页 **不是全服市场库存**，不能把挂单消失当作真实成交，也不能根据角色身份判断工作室。
+
+如果面板显示 0 条，可能是查询结果确实为空、API 不兼容、缓存未加载、其他 AH 插件干扰或扫描覆盖不足；请记录 `/ac probe` 输出以及面板最后一次扫描信息。
+
+无自动买卖、后台自动查询、模拟点击、反 AFK、绕过查询限速或对游戏内存的读取。
