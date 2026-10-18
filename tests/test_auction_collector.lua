@@ -6,6 +6,7 @@ local queryCount = 0
 local queryArguments = nil
 local scannedRows = 2
 local resultItemName = "黑莲花"
+local sellerNamesResolved = false
 
 local methods = {}
 function methods:SetScript(event, fn) self.scripts[event] = fn end
@@ -54,7 +55,8 @@ function GetNumAuctionItems() return scannedRows, scannedRows end
 function GetAuctionItemInfo(_,index)
     return resultItemName, "icon", index == 1 and 2 or 3, 4, true, 60,
         "Level", 10000, 1000, 200000, 0, false, nil,
-        index == 1 and "采集一" or nil, nil, 0, 13468, true
+        sellerNamesResolved and (index == 1 and "采集一" or "采集二") or nil,
+        nil, 0, 13468, true
 end
 function ReloadUI() _G.reloadInvoked=true end
 C_Timer={After=function(_,callback) callbacks[#callbacks + 1] = callback end}
@@ -96,14 +98,20 @@ assert(queryArguments[1]=="黑莲花" and queryArguments[4]==0)
 assert(queryArguments[5]==false and queryArguments[7]==false and queryArguments[8]==true)
 fire("AUCTION_ITEM_LIST_UPDATE")
 local state=AuctionCollector.GetState()
+assert(state.status=="resolving" and state.pending==true and state.newPages==0)
+assert(queryCount==count+1, "Seller resolution must not send another AH search")
+sellerNamesResolved=true
+fire("AUCTION_ITEM_LIST_UPDATE")
+state=AuctionCollector.GetState()
 assert(state.status=="captured" and state.newPages==1)
 assert(state.totalPages==1 and state.restoredCount==0)
 assert(state.latest.rows[1].seller_character=="采集一")
+assert(state.latest.rows[2].seller_character=="采集二")
 assert(state.latest.rows[1].item_id==13468)
 assert(state.latest.rows[1].buyout_copper==200000)
 assert(state.latest.rows[1].unit_buyout_copper==100000)
 assert(state.latest.complete==true)
-assert(state.latest.missing_owner_rows==1)
+assert(state.latest.missing_owner_rows==0)
 assert(anyText("待写入磁盘"),"UI should warn data is still in memory")
 for _,callback in ipairs(callbacks) do callback() end
 assert(AuctionCollector.GetState().status=="captured", "Late timeout must not overwrite result")
@@ -130,6 +138,21 @@ state=AuctionCollector.GetState()
 assert(state.status=="empty_result" and state.newPages==0)
 assert(state.totalPages==beforeEmptyPages)
 assert(string.find(state.message, "本次未保存", 1, true))
+
+-- If sellers remain unresolved, a bounded re-read persists usable price rows as partial data.
+scannedRows=2
+sellerNamesResolved=false
+SlashCmdList.AUCTIONCOLLECTOR("lotus")
+fire("AUCTION_ITEM_LIST_UPDATE")
+state=AuctionCollector.GetState()
+assert(state.status=="resolving" and state.pending==true)
+local queryCountBeforeFallback=queryCount
+callbacks[#callbacks]()
+state=AuctionCollector.GetState()
+assert(state.status=="captured" and state.newPages==1)
+assert(state.latest.complete==false and state.latest.seller_resolution_timed_out==true)
+assert(state.latest.missing_owner_rows==2 and #state.latest.rows==2)
+assert(queryCount==queryCountBeforeFallback, "Fallback must not send another AH search")
 
 -- Every required Legacy capability is checked before a query can be queued.
 local legacy = {
