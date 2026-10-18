@@ -25,5 +25,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq lua5.1
           find addons -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p
+      - name: Exercise addon state transitions with WoW API mock
+        run: lua5.1 tests/test_auction_collector.lua
       - name: Validate Azure Compose template
         run: docker compose --env-file deploy/azure/.env.example -f deploy/azure/docker-compose.yml config --quiet
