@@ -1,8 +1,8 @@
 ## Interface: 11509
 ## Title: AuctionCollector
-## Notes: Manual auction-house snapshots for market research (Classic Era / Hardcore)
+## Notes: User-started auction-house collection with paginated snapshots (Classic Era / Hardcore)
 ## Author: delinecnlin
-## Version: 0.3.0-alpha
+## Version: 0.4.2-alpha
 ## SavedVariables: AuctionCollectorDB
 ## DefaultState: Enabled
 

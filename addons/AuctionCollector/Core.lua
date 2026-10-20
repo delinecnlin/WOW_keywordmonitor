@@ -2,31 +2,37 @@ local ADDON_NAME = ...
 local AC = CreateFrame("Frame")
 AuctionCollector = AuctionCollector or {}
 local API = AuctionCollector
+
 local pending = nil
+local activeBatch = nil
+local activeSweep = nil
 local lastQuery = nil
 local lastQueryItemId = nil
 local sequence = 0
-local MAX_SCANS = 80
+local MAX_SCANS = 200
+local MAX_AUTO_PAGES = 200
+local AUCTIONS_PER_PAGE = 50
+local AUTO_PAGE_RETRY_SECONDS = 2
+local MAX_COOLDOWN_RETRIES = 180
 local SELLER_RESOLUTION_WAIT_SECONDS = 2
--- Names are the Simplified Chinese Classic Era client names. Keep item IDs
--- alongside them so a stale/shared Legacy result list cannot be mislabeled.
-local WATCHLIST = {
+
+-- User-editable names must match the Simplified Chinese Classic Era AH names.
+-- Previously listed herbs were removed; keep only the requested products/material.
+local DEFAULT_WATCHLIST = {
     {name = "黑莲花", item_id = 13468},
     {name = "泰坦合剂", item_id = 13510},
     {name = "精炼智慧合剂", item_id = 13511},
     {name = "超级能量合剂", item_id = 13512},
     {name = "多重抗性合剂", item_id = 13513},
     {name = "化石合剂", item_id = 13506},
-    {name = "格罗姆之血", item_id = 8846},
     {name = "石鳞鱼油", item_id = 13423},
-    {name = "梦叶草", item_id = 13463},
-    {name = "冰盖草", item_id = 13467},
-    {name = "山鼠草", item_id = 13465},
 }
+
 -- Only a subsequent /reload/login can confirm WoW has reloaded SavedVariables.
 local session = {
     restoredCount = 0, restoredLatest = nil, newPages = 0,
     status = "not_loaded", message = "插件尚未初始化", lastResult = nil,
+    lastBatch = nil,
 }
 
 local function refreshPanel()
@@ -77,71 +83,299 @@ local function supported()
        and type(CanSendAuctionQuery) == "function"
 end
 
+local function copyDefaults()
+    local copy = {}
+    for i, item in ipairs(DEFAULT_WATCHLIST) do
+        copy[i] = {name = item.name, item_id = item.item_id}
+    end
+    return copy
+end
+
+local function trim(value)
+    if type(value) ~= "string" then return "" end
+    return (value:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function isValidWatchItem(name, itemId)
+    return type(name) == "string"
+       and #name > 0 and #name <= 63
+       and not name:find("[%c]")
+       and type(itemId) == "number"
+       and itemId >= 1 and itemId <= 2147483647
+       and itemId == math.floor(itemId)
+end
+
 local function initialize()
     if type(AuctionCollectorDB) ~= "table" then AuctionCollectorDB = {} end
     if type(AuctionCollectorDB.scans) ~= "table" then AuctionCollectorDB.scans = {} end
-    AuctionCollectorDB.schema_version = 1
+    if type(AuctionCollectorDB.watchlist) ~= "table" then
+        AuctionCollectorDB.watchlist = copyDefaults()
+    else
+        local cleaned = {}
+        local seenNames, seenIds = {}, {}
+        for _, item in ipairs(AuctionCollectorDB.watchlist) do
+            local name = type(item) == "table" and trim(item.name) or ""
+            local itemId = type(item) == "table" and tonumber(item.item_id) or nil
+            if isValidWatchItem(name, itemId)
+                and not seenNames[name] and not seenIds[itemId] then
+                cleaned[#cleaned + 1] = {name = name, item_id = itemId}
+                seenNames[name] = true
+                seenIds[itemId] = true
+            end
+        end
+        AuctionCollectorDB.watchlist = cleaned
+    end
+    AuctionCollectorDB.schema_version = 2
 end
 
-local function beginPage(query, page, expectedItemId)
-    if not supported() then
-        setStatus("error", "客户端不支持 Legacy AH 查询接口")
-        say("此客户端未检测到 Classic QueryAuctionItems API。请记录 /ac probe 结果；尚未支持 C_AuctionHouse。")
+local function setBatchScanMetadata(batch, status, complete)
+    for _, scan in ipairs(batch.scans) do
+        scan.collection_status = status
+        scan.collection_complete = complete == true
+        scan.collection_page_count = #batch.scans
+        scan.collection_row_count = batch.rowCount
+    end
+end
+
+local beginPage, startSweepItem
+
+local function stopBatch(batch, status, message)
+    if not batch or activeBatch ~= batch then return end
+    setBatchScanMetadata(batch, status == "error" and "failed" or "stopped", false)
+    local sweep = batch.sweep
+    if sweep and activeSweep == sweep then
+        sweep.pages = sweep.pages + #batch.scans
+        sweep.rows = sweep.rows + batch.rowCount
+        session.lastBatch = {
+            id = sweep.id, query = "全部采集", pages = sweep.pages,
+            rows = sweep.rows, complete = false,
+            item_count = #sweep.items, completed_items = sweep.completedItems,
+        }
+        activeSweep = nil
+        message = message .. " 全部采集已终止，已完成 "
+            .. tostring(sweep.completedItems) .. "/" .. tostring(#sweep.items) .. " 个物品。"
+    else
+        session.lastBatch = {
+            id = batch.id, query = batch.query, pages = #batch.scans,
+            rows = batch.rowCount, complete = false,
+        }
+    end
+    activeBatch = nil
+    setStatus(status, message)
+    say(message)
+end
+
+local function completeBatch(batch)
+    if not batch or activeBatch ~= batch then return end
+    setBatchScanMetadata(batch, "complete", true)
+    activeBatch = nil
+    local message = batch.query .. " 自动采集完成：" .. tostring(#batch.scans)
+        .. " 页、" .. tostring(batch.rowCount) .. " 条挂单；数据在内存中，待写盘。"
+    local sweep = batch.sweep
+    if sweep and activeSweep == sweep then
+        sweep.completedItems = sweep.completedItems + 1
+        sweep.pages = sweep.pages + #batch.scans
+        sweep.rows = sweep.rows + batch.rowCount
+        if batch.stop_requested then
+            activeSweep = nil
+            session.lastBatch = {
+                id = sweep.id, query = "全部采集", pages = sweep.pages,
+                rows = sweep.rows, complete = false,
+                item_count = #sweep.items, completed_items = sweep.completedItems,
+            }
+            local stoppedMessage = "全部采集已停止：已完成 "
+                .. tostring(sweep.completedItems) .. "/" .. tostring(#sweep.items)
+                .. " 个物品；数据在内存中，待写盘。"
+            setStatus("stopped", stoppedMessage)
+            say(stoppedMessage)
+            return
+        end
+        if sweep.currentIndex < #sweep.items then
+            startSweepItem(sweep, sweep.currentIndex + 1)
+            return
+        end
+        activeSweep = nil
+        session.lastBatch = {
+            id = sweep.id, query = "全部采集", pages = sweep.pages,
+            rows = sweep.rows, complete = true,
+            item_count = #sweep.items, completed_items = sweep.completedItems,
+        }
+        message = "全部采集完成：" .. tostring(sweep.completedItems) .. " 个物品、"
+            .. tostring(sweep.pages) .. " 页、" .. tostring(sweep.rows)
+            .. " 条挂单；数据在内存中，待写盘。"
+        setStatus("completed", message)
+        say(message)
         return
+    end
+    session.lastBatch = {
+        id = batch.id, query = batch.query, pages = #batch.scans,
+        rows = batch.rowCount, complete = true,
+    }
+    setStatus("completed", message)
+    say(message)
+end
+
+local function scheduleAutoRetry(batch)
+    if activeBatch ~= batch or batch.stop_requested then return end
+    if not C_Timer or type(C_Timer.After) ~= "function" then
+        stopBatch(batch, "error", "客户端定时器不可用，自动翻页已停止。")
+        return
+    end
+    batch.cooldownRetries = (batch.cooldownRetries or 0) + 1
+    if batch.cooldownRetries > MAX_COOLDOWN_RETRIES then
+        stopBatch(batch, "error", "等待拍卖行查询冷却超过 6 分钟，自动翻页已停止。")
+        return
+    end
+    C_Timer.After(AUTO_PAGE_RETRY_SECONDS, function()
+        if activeBatch ~= batch then return end
+        if batch.stop_requested then
+            stopBatch(batch, "stopped", batch.query .. " 自动翻页已停止；已保留已采集页面。")
+            return
+        end
+        if pending then return end
+        beginPage(batch.query, batch.nextPage, batch.item_id, batch)
+    end)
+end
+
+beginPage = function(query, page, expectedItemId, batch)
+    if not supported() then
+        if batch then
+            stopBatch(batch, "error", "客户端不支持 Legacy AH 查询接口；自动翻页停止。")
+        else
+            setStatus("error", "客户端不支持 Legacy AH 查询接口")
+            say("此客户端未检测到 Classic QueryAuctionItems API。请记录 /ac probe 结果；尚未支持 C_AuctionHouse。")
+        end
+        return false
     end
     if pending then
-        setStatus("pending", "上一次查询尚未返回，请勿连续触发")
-        say("上一次查询仍在等待 AUCTION_ITEM_LIST_UPDATE。")
-        return
+        if batch then
+            setStatus("auto_wait", "上一页仍在等待 AH 返回，自动翻页暂候。")
+        else
+            setStatus("pending", "上一次查询尚未返回，请勿连续触发")
+            say("上一次查询仍在等待 AUCTION_ITEM_LIST_UPDATE。")
+        end
+        return false
     end
-    if type(query) ~= "string" or #query > 63 then
-        setStatus("error", "无效的查询名称")
-        say("查询名称必须是 63 字节以内的字符串。")
-        return
+    if activeBatch and activeBatch ~= batch then
+        setStatus("auto_wait", "当前物品正在自动翻页；请等待完成或先停止。")
+        return false
+    end
+    if type(query) ~= "string" or #query > 63 or query == "" then
+        if batch then stopBatch(batch, "error", "无效的查询名称；自动翻页停止。")
+        else setStatus("error", "无效的查询名称") end
+        return false
     end
     page = tonumber(page) or 0
     if page < 0 or page ~= math.floor(page) then
-        setStatus("error", "页号必须是非负整数")
-        say("页号必须是非负整数。")
-        return
-    end
-    if type(CanSendAuctionQuery) == "function" then
-        local ok, can = pcall(CanSendAuctionQuery)
-        if not ok or not can then
-            setStatus("cooldown", "查询冷却中，本次未发送请求")
-            say("客户端查询冷却中，未发送请求。")
-            return
-        end
+        if batch then stopBatch(batch, "error", "页号无效；自动翻页停止。")
+        else setStatus("error", "页号必须是非负整数") end
+        return false
     end
 
+    local ok, can = pcall(CanSendAuctionQuery)
+    if not ok then
+        if batch then
+            stopBatch(batch, "error", "读取 AH 查询冷却状态失败；自动翻页停止。")
+        else
+            setStatus("error", "读取 AH 查询冷却状态失败")
+            say("无法读取客户端查询冷却状态；本次未发送请求。")
+        end
+        return false
+    end
+    if not can then
+        if batch then
+            batch.nextPage = page
+            local prefix = batch.sweep and ("全部采集 " .. tostring(batch.sweep.currentIndex)
+                .. "/" .. tostring(#batch.sweep.items) .. "：") or ""
+            setStatus("auto_wait", prefix .. "自动翻页等待 AH 查询冷却，即将查询第 "
+                .. tostring(page + 1) .. " 页。")
+            scheduleAutoRetry(batch)
+        else
+            setStatus("cooldown", "查询冷却中，本次未发送请求")
+            say("客户端查询冷却中，未发送请求。")
+        end
+        return false
+    end
+
+    if batch then batch.cooldownRetries = 0 end
     sequence = sequence + 1
     local request = {
         query = query, page = page, start_ms = (GetTime and GetTime() or 0) * 1000,
         started_at = now(), sequence = sequence,
-        item_id = tonumber(expectedItemId),
+        item_id = tonumber(expectedItemId), batch = batch,
     }
-    -- Only this explicit user action submits a query. No unattended scanning.
     pending = request
-    setStatus("pending", "正在等待：" .. query .. " 第 " .. tostring(page + 1) .. " 页")
-    local ok, err = pcall(QueryAuctionItems, query, nil, nil, page, false, nil, false, true, nil)
-    if not ok then
+    if batch then
+        batch.nextPage = page
+        local prefix = batch.sweep and ("全部采集 " .. tostring(batch.sweep.currentIndex)
+            .. "/" .. tostring(#batch.sweep.items) .. "：") or ""
+        setStatus("pending", prefix .. "自动采集 " .. query
+            .. "：正在查询第 " .. tostring(page + 1) .. " 页。")
+    else
+        setStatus("pending", "正在等待：" .. query .. " 第 " .. tostring(page + 1) .. " 页")
+    end
+    local queryOk, err = pcall(QueryAuctionItems, query, nil, nil, page, false, nil, false, true, nil)
+    if not queryOk then
         if pending == request then pending = nil end
-        setStatus("error", "查询失败：" .. tostring(err))
-        say("客户端拒绝查询: " .. tostring(err))
-        return
+        if batch then
+            stopBatch(batch, "error", "客户端拒绝查询：" .. tostring(err) .. "；自动翻页停止。")
+        else
+            setStatus("error", "查询失败：" .. tostring(err))
+            say("客户端拒绝查询: " .. tostring(err))
+        end
+        return false
     end
     lastQuery = query
     lastQueryItemId = request.item_id
-    say("已发送人工查询： " .. query .. " 第 " .. tostring(page + 1) .. " 页，等待 AH 响应。")
+    say((batch and "已启动自动采集：" or "已发送查询：") .. query
+        .. " 第 " .. tostring(page + 1) .. " 页，等待 AH 响应。")
     if C_Timer and type(C_Timer.After) == "function" then
         C_Timer.After(30, function()
             if pending == request then
                 pending = nil
-                setStatus("error", "查询 30 秒未返回，未生成扫描数据")
-                say("查询超时；请检查 AH 窗口、API 或其他拍卖插件。")
+                if batch then
+                    stopBatch(batch, "error", "查询第 " .. tostring(page + 1)
+                        .. " 页 30 秒未返回，自动翻页停止；已保留之前采集页。")
+                else
+                    setStatus("error", "查询 30 秒未返回，未生成扫描数据")
+                    say("查询超时；请检查 AH 窗口、API 或其他拍卖插件。")
+                end
             end
         end)
     end
+    return true
+end
+
+startSweepItem = function(sweep, index)
+    if not sweep or activeSweep ~= sweep then return false end
+    local item = sweep.items[index]
+    if not item then return false end
+    sweep.currentIndex = index
+    local batch = {
+        id = tostring(now()) .. "-collection-" .. tostring(sequence + 1),
+        query = item.name, item_id = item.item_id,
+        nextPage = 0, rowCount = 0, scans = {}, cooldownRetries = 0,
+        sweep = sweep,
+    }
+    activeBatch = batch
+    return beginPage(item.name, 0, item.item_id, batch)
+end
+
+local function resultHasMore(request, num, total)
+    total = tonumber(total)
+    if total and total >= 0 then
+        local pageOffset = request.page * AUCTIONS_PER_PAGE
+        if total < pageOffset then
+            return nil, "AH 返回的总条目数已小于第 " .. tostring(request.page + 1) .. " 页起始位置"
+        end
+        local expectedRows = math.min(AUCTIONS_PER_PAGE, total - pageOffset)
+        if num ~= expectedRows then
+            return nil, "AH 第 " .. tostring(request.page + 1) .. " 页返回 " .. tostring(num)
+                .. " 条，但总数对应应有 " .. tostring(expectedRows) .. " 条；可能在扫描期间发生变化"
+        end
+        return pageOffset + num < total
+    end
+    return num >= AUCTIONS_PER_PAGE
 end
 
 local function collect(forcePartialOwnerCapture)
@@ -150,16 +384,25 @@ local function collect(forcePartialOwnerCapture)
     local ok, num, total = pcall(GetNumAuctionItems, "list")
     if not ok or type(num) ~= "number" then
         pending = nil
-        setStatus("error", "读取拍卖行列表失败；本次未保存")
-        say("无法获取拍卖行列表；本次未保存。")
+        if request.batch then
+            stopBatch(request.batch, "error", "读取拍卖行列表失败；自动翻页停止，未保存本页。")
+        else
+            setStatus("error", "读取拍卖行列表失败；本次未保存")
+            say("无法获取拍卖行列表；本次未保存。")
+        end
         return
     end
     if num == 0 then
         pending = nil
-        -- With no rows, the shared Legacy list cannot identify which query
-        -- produced the update, so show the result but do not persist it.
-        setStatus("empty_result", "AH 返回 0 条；无法核对查询归属，本次未保存")
-        say("AH 当前列表为 0 条；因无法核对查询归属，本次未保存空页。")
+        if request.batch then
+            stopBatch(request.batch, "empty_result", "第 " .. tostring(request.page + 1)
+                .. " 页返回 0 条，无法核对结果归属；自动翻页停止，之前页面已保留。")
+        else
+            -- With no rows, the shared Legacy list cannot identify which query
+            -- produced the update, so show the result but do not persist it.
+            setStatus("empty_result", "AH 返回 0 条；无法核对查询归属，本次未保存")
+            say("AH 当前列表为 0 条；因无法核对查询归属，本次未保存空页。")
+        end
         return
     end
     local rows = {}
@@ -221,21 +464,29 @@ local function collect(forcePartialOwnerCapture)
     end
     if mismatchedItem then
         pending = nil
-        setStatus("error", "AH 当前列表与请求物品不一致；本次未保存")
-        say("AH 结果列表中的物品与本次查询不一致，本次未保存；请关闭其他搜索后重试。")
+        if request.batch then
+            stopBatch(request.batch, "error", "AH 结果与请求物品不一致；自动翻页已停止，本页未保存。")
+        else
+            setStatus("error", "AH 当前列表与请求物品不一致；本次未保存")
+            say("AH 结果列表中的物品与本次查询不一致，本次未保存；请关闭其他搜索后重试。")
+        end
         return
     end
     if #rows == 0 then
         pending = nil
-        setStatus("error", "未能读取有效挂单；本次未保存")
-        say("列表有挂单但插件未能读取有效数据；本次未保存。")
+        if request.batch then
+            stopBatch(request.batch, "error", "未能读取有效挂单；自动翻页停止，本页未保存。")
+        else
+            setStatus("error", "未能读取有效挂单；本次未保存")
+            say("列表有挂单但插件未能读取有效数据；本次未保存。")
+        end
         return
     end
     if missingOwner > 0 and not forcePartialOwnerCapture then
         if C_Timer and type(C_Timer.After) == "function" then
             if not request.ownerResolutionFallbackScheduled then
                 request.ownerResolutionFallbackScheduled = true
-                setStatus("resolving", "等待客户端解析卖家名称；不重发 AH 查询")
+                setStatus("resolving", "等待客户端解析卖家名称；不重发当前 AH 查询")
                 say("部分卖家名称尚未解析，等待最多 " .. SELLER_RESOLUTION_WAIT_SECONDS
                     .. " 秒；不会再次查询 AH。")
                 C_Timer.After(SELLER_RESOLUTION_WAIT_SECONDS, function()
@@ -245,7 +496,13 @@ local function collect(forcePartialOwnerCapture)
             return
         end
     end
+
+    local hasMore, paginationError
+    if request.batch then
+        hasMore, paginationError = resultHasMore(request, num, total)
+    end
     pending = nil
+
     local end_ms = (GetTime and GetTime() or 0) * 1000
     local scan = {
         schema_version = 1,
@@ -256,7 +513,9 @@ local function collect(forcePartialOwnerCapture)
         query = request.query, requested_item_id = request.item_id, page = request.page,
         reported_page_count = num, reported_total = tonumber(total),
         coverage = "single_page",
-        complete = invalid == 0 and missingOwner == 0 and missingInfo == 0 and #rows == num,
+        complete = invalid == 0 and missingOwner == 0 and missingInfo == 0
+            and #rows == num and not paginationError,
+        pagination_error = paginationError,
         invalid_rows = invalid, missing_owner_rows = missingOwner, missing_info_rows = missingInfo,
         time_left_api_available = timeLeftAPIAvailable,
         missing_time_left_rows = missingTimeLeft,
@@ -265,6 +524,14 @@ local function collect(forcePartialOwnerCapture)
         duration_ms = math.max(0, math.floor(end_ms - request.start_ms)),
         rows = rows,
     }
+    if request.batch then
+        scan.collection_id = request.batch.id
+        scan.collection_status = "in_progress"
+        scan.collection_complete = false
+        request.batch.reportedTotal = tonumber(total)
+        request.batch.scans[#request.batch.scans + 1] = scan
+        request.batch.rowCount = request.batch.rowCount + #rows
+    end
     initialize()
     table.insert(AuctionCollectorDB.scans, scan)
     while #AuctionCollectorDB.scans > MAX_SCANS do
@@ -274,20 +541,61 @@ local function collect(forcePartialOwnerCapture)
     session.lastResult = scan
     local partialSellerNote = missingOwner > 0
         and ("；卖家名仍缺 " .. tostring(missingOwner) .. " 条，已标记为部分数据") or ""
+
+    if request.batch then
+        local batch = request.batch
+        if paginationError then
+            stopBatch(batch, "error", paginationError .. "；当前页已保存为不完整数据，自动翻页停止。")
+            return
+        end
+        if not hasMore then
+            completeBatch(batch)
+            return
+        end
+        if batch.stop_requested then
+            stopBatch(batch, "stopped", batch.query .. " 自动翻页已停止；已保留当前页和之前采集页。")
+            return
+        end
+        if request.page + 1 >= MAX_AUTO_PAGES then
+            stopBatch(batch, "stopped", batch.query .. " 已达到单次 " .. MAX_AUTO_PAGES
+                .. " 页保护上限；已保留采集页，请检查 AH 返回总数。")
+            return
+        end
+        batch.nextPage = request.page + 1
+        setStatus("auto_wait", "自动翻页中：" .. batch.query .. " 已采集 "
+            .. tostring(#batch.scans) .. " 页 / " .. tostring(batch.rowCount)
+            .. " 条，等待查询第 " .. tostring(batch.nextPage + 1) .. " 页" .. partialSellerNote)
+        scheduleAutoRetry(batch)
+        return
+    end
+
     setStatus("captured", "已采集 " .. tostring(#rows) .. " 条挂单（内存，待写盘）" .. partialSellerNote)
     say("保存 " .. tostring(#rows) .. "/" .. tostring(num)
-        .. " 行，总结果 " .. tostring(total or "?") .. "；卖家缺失 " .. tostring(missingOwner)
-        .. (scan.seller_resolution_timed_out and "（等待后仍未解析）" or "")
-        .. "；仅本页，需 /reload 或正常登出落盘。")
+        .. " 行，总结果 " .. tostring(total or "?") .. "；仅本页；需 /reload 或正常登出落盘。")
 end
 
 -- Read-only public API for the optional in-game status window.
 function API.GetState()
     initialize()
+    local expectedPages
+    if activeBatch and activeBatch.reportedTotal and activeBatch.reportedTotal > 0 then
+        expectedPages = math.ceil(activeBatch.reportedTotal / AUCTIONS_PER_PAGE)
+    end
     return {
         status = session.status,
         message = session.message,
         pending = pending ~= nil,
+        autoScanning = activeBatch ~= nil or activeSweep ~= nil,
+        allScanning = activeSweep ~= nil,
+        sweepItemIndex = activeSweep and activeSweep.currentIndex or nil,
+        sweepItemCount = activeSweep and #activeSweep.items or nil,
+        sweepCompletedItems = activeSweep and activeSweep.completedItems or nil,
+        autoQuery = activeBatch and activeBatch.query or nil,
+        autoPage = activeBatch and (activeBatch.nextPage + 1) or nil,
+        autoPagesDone = activeBatch and #activeBatch.scans or 0,
+        autoRows = activeBatch and activeBatch.rowCount or 0,
+        autoPagesExpected = expectedPages,
+        lastBatch = session.lastBatch,
         restoredCount = session.restoredCount,
         restoredLatest = session.restoredLatest,
         newPages = session.newPages,
@@ -301,41 +609,170 @@ function API.GetState()
         legacyAPIAvailable = supported(),
         modernAPIAvailable = type(C_AuctionHouse) == "table",
         timeLeftAPIAvailable = type(GetAuctionItemTimeLeft) == "function",
+        watchlistCount = #AuctionCollectorDB.watchlist,
     }
 end
 
 function API.GetWatchlist()
+    initialize()
     local copy = {}
-    for i, item in ipairs(WATCHLIST) do
+    for i, item in ipairs(AuctionCollectorDB.watchlist) do
         copy[i] = {name = item.name, item_id = item.item_id}
     end
     return copy
 end
 
-function API.ScanWatchlistItem(index)
+function API.AddWatchlistItem(name, itemId)
+    initialize()
+    if activeBatch or activeSweep or pending then
+        say("采集进行中，请结束或停止后再修改清单。")
+        return false
+    end
+    name = trim(name)
+    itemId = tonumber(itemId)
+    if not isValidWatchItem(name, itemId) then
+        say("新增失败：请填写物品名称和正整数物品 ID（名称不超过 63 字节）。")
+        return false
+    end
+    for _, item in ipairs(AuctionCollectorDB.watchlist) do
+        if item.name == name or item.item_id == itemId then
+            say("新增失败：清单中已有相同名称或物品 ID。")
+            return false
+        end
+    end
+    AuctionCollectorDB.watchlist[#AuctionCollectorDB.watchlist + 1] = {
+        name = name, item_id = itemId,
+    }
+    say("已加入采集清单：" .. name .. "（ID " .. tostring(itemId) .. "）。")
+    refreshPanel()
+    return true
+end
+
+function API.RemoveWatchlistItem(index)
+    initialize()
     index = tonumber(index)
-    if not index or index ~= math.floor(index) or not WATCHLIST[index] then
+    if activeBatch or activeSweep or pending then
+        say("采集进行中，请结束或停止后再修改清单。")
+        return false
+    end
+    if not index or index ~= math.floor(index) or not AuctionCollectorDB.watchlist[index] then
+        say("移除失败：清单项目序号无效。")
+        return false
+    end
+    local removed = table.remove(AuctionCollectorDB.watchlist, index)
+    say("已从清单移除：" .. removed.name .. "。历史采集记录保留。")
+    refreshPanel()
+    return true
+end
+
+function API.ScanWatchlistItem(index)
+    initialize()
+    index = tonumber(index)
+    if not index or index ~= math.floor(index) or not AuctionCollectorDB.watchlist[index] then
         setStatus("error", "物品清单序号无效")
         say("物品清单序号无效；输入 /ac items 查看清单。")
         return
     end
-    local item = WATCHLIST[index]
-    beginPage(item.name, 0, item.item_id)
+    if pending or activeBatch or activeSweep then
+        setStatus(activeBatch and "auto_wait" or "pending",
+            "当前采集尚未完成；请等待或先停止后再开始其他采集。")
+        return
+    end
+    local item = AuctionCollectorDB.watchlist[index]
+    local batch = {
+        id = tostring(now()) .. "-collection-" .. tostring(sequence + 1),
+        query = item.name, item_id = item.item_id,
+        nextPage = 0, rowCount = 0, scans = {}, cooldownRetries = 0,
+    }
+    activeBatch = batch
+    session.lastBatch = nil
+    beginPage(item.name, 0, item.item_id, batch)
 end
 
-API.ScanLotus = function() API.ScanWatchlistItem(1) end
+function API.ScanAllWatchlist()
+    initialize()
+    if pending or activeBatch or activeSweep then
+        setStatus(activeSweep and "auto_wait" or (activeBatch and "auto_wait" or "pending"),
+            "当前采集尚未完成；请等待或先停止，再开始全部采集。")
+        return false
+    end
+    local items = API.GetWatchlist()
+    if #items == 0 then
+        setStatus("error", "采集物品清单为空；请先添加物品。")
+        return false
+    end
+    local sweep = {
+        id = tostring(now()) .. "-all-" .. tostring(sequence + 1),
+        items = items, currentIndex = 0, completedItems = 0,
+        pages = 0, rows = 0,
+    }
+    activeSweep = sweep
+    session.lastBatch = nil
+    say("已启动全部采集：共 " .. tostring(#items)
+        .. " 个物品，按清单顺序扫描；可随时停止。")
+    startSweepItem(sweep, 1)
+    return true
+end
+
+API.ScanLotus = function()
+    initialize()
+    for index, item in ipairs(AuctionCollectorDB.watchlist) do
+        if item.item_id == 13468 or item.name == "黑莲花" then
+            API.ScanWatchlistItem(index)
+            return
+        end
+    end
+    setStatus("error", "黑莲花已从清单移除；请先重新加入清单")
+    say("黑莲花已从清单移除；请在面板填入名称和物品 ID 后重新加入。")
+end
+
+API.StopAutoScan = function()
+    local batch = activeBatch
+    if not batch then
+        if activeSweep then
+            local sweep = activeSweep
+            activeSweep = nil
+            session.lastBatch = {
+                id = sweep.id, query = "全部采集", pages = sweep.pages,
+                rows = sweep.rows, complete = false,
+                item_count = #sweep.items, completed_items = sweep.completedItems,
+            }
+            setStatus("stopped", "全部采集已停止：已完成 "
+                .. tostring(sweep.completedItems) .. "/" .. tostring(#sweep.items) .. " 个物品。")
+            return true
+        end
+        say("当前没有正在进行的自动翻页。")
+        return false
+    end
+    batch.stop_requested = true
+    if pending and pending.batch == batch then
+        setStatus("stopping", "已请求停止；当前页若返回会先保存，然后停止自动翻页。")
+        say("收到停止请求；不会再发送下一页查询。")
+    else
+        stopBatch(batch, "stopped", batch.query .. " 自动翻页已停止；已保留已采集页面。")
+    end
+    return true
+end
+
 API.ScanNext = function()
+    if activeBatch or activeSweep then
+        setStatus("pending", "正在自动翻页；无需手动点下一页。")
+        return
+    end
     if not lastQuery then
-        setStatus("error", "请先扫描第一页，再手动选择下一页")
-        say("请先 /ac lotus")
+        setStatus("error", "请先从物品清单开始采集")
+        say("请先点击清单中的物品。")
         return
     end
     initialize()
     local last = AuctionCollectorDB.scans[#AuctionCollectorDB.scans]
     local nextPage = 0
-    if last and last.query == lastQuery then nextPage = (last.page or 0) + 1 end
+    if last and last.query == lastQuery and last.requested_item_id == lastQueryItemId then
+        nextPage = (last.page or 0) + 1
+    end
     beginPage(lastQuery, nextPage, lastQueryItemId)
 end
+
 API.Probe = function()
     say("Legacy API " .. tostring(supported())
         .. " / Auction item time-left API " .. tostring(type(GetAuctionItemTimeLeft) == "function")
@@ -367,8 +804,8 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         return
     end
     if command == "items" then
-        for i, item in ipairs(WATCHLIST) do
-            say(tostring(i) .. ". " .. item.name)
+        for i, item in ipairs(API.GetWatchlist()) do
+            say(tostring(i) .. ". " .. item.name .. "（ID " .. tostring(item.item_id) .. "）")
         end
         return
     end
@@ -377,11 +814,16 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         return
     end
     if command == "scan" then
-        if argument == "" then
-            API.ScanLotus()
-        else
-            API.ScanWatchlistItem(argument)
-        end
+        if argument == "" then API.ScanLotus()
+        else API.ScanWatchlistItem(argument) end
+        return
+    end
+    if command == "all" then
+        API.ScanAllWatchlist()
+        return
+    end
+    if command == "stop" then
+        API.StopAutoScan()
         return
     end
     if command == "next" then
@@ -392,9 +834,11 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         local page = tonumber(argument)
         if not page or page ~= math.floor(page) or page < 1 then
             say("用法：/ac page 1 （页码从 1 开始）")
+        elseif activeBatch or pending then
+            say("当前查询尚未结束，不能切换分页。")
         else
-            beginPage(lastQuery or WATCHLIST[1].name, page - 1,
-                lastQueryItemId or WATCHLIST[1].item_id)
+            beginPage(lastQuery or DEFAULT_WATCHLIST[1].name, page - 1,
+                lastQueryItemId or DEFAULT_WATCHLIST[1].item_id)
         end
         return
     end
@@ -402,7 +846,7 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         say("为避免误删研究数据，暂不提供游戏内清空功能，请先导出并自行清理 SavedVariables。")
         return
     end
-    say("命令：/ac 打开面板、/ac items、/ac scan 序号、/ac lotus、/ac next、/ac page N、/ac status")
+    say("命令：/ac 打开面板、/ac items、/ac scan 序号、/ac all、/ac lotus、/ac stop、/ac status")
 end
 
 AC:RegisterEvent("ADDON_LOADED")
@@ -420,14 +864,17 @@ AC:SetScript("OnEvent", function(self, event, arg)
         else
             setStatus("empty", "尚无存档数据；请打开拍卖行开始采集")
         end
-        say("已加载。输入 /ac 打开状态面板。")
+        say("已加载。可点选单项或「全部采集」；自动分页完成后按 Esc 可关闭面板。")
     elseif event == "AUCTION_ITEM_LIST_UPDATE" then
         collect()
     elseif event == "AUCTION_HOUSE_SHOW" then
         if type(API.ShowPanel) == "function" then API.ShowPanel() end
     elseif event == "AUCTION_HOUSE_CLOSED" then
-        if pending then
-            pending = nil
+        local hadPending = pending ~= nil
+        pending = nil
+        if activeBatch then
+            stopBatch(activeBatch, "stopped", "拍卖行已关闭，自动翻页停止；已采集页面保留。")
+        elseif hadPending then
             setStatus("error", "拍卖行已关闭，本次查询未保存")
         end
     end
