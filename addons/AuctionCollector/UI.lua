@@ -3,9 +3,22 @@
 local API = AuctionCollector
 if type(API) ~= "table" then return end
 
+local MIN_PANEL_HEIGHT = 680
+local MAX_PANEL_HEIGHT = 910
+local panelHeight = MAX_PANEL_HEIGHT
+local panelTopInset = 20
+if UIParent and type(UIParent.GetHeight) == "function" then
+    local availableHeight = tonumber(UIParent:GetHeight())
+    if availableHeight and availableHeight > 0 then
+        panelHeight = math.min(MAX_PANEL_HEIGHT, math.max(MIN_PANEL_HEIGHT, availableHeight - 20))
+        panelTopInset = math.min(20, math.max(0, (availableHeight - panelHeight) / 2))
+    end
+end
+local watchlistHeight = math.max(28, panelHeight - 670)
+
 local panel = CreateFrame("Frame", "AuctionCollectorStatusPanel", UIParent)
-panel:SetSize(620, 790)
-panel:SetPoint("CENTER", UIParent, "CENTER", 185, 0)
+panel:SetSize(620, panelHeight)
+panel:SetPoint("TOP", UIParent, "TOP", 0, -panelTopInset)
 panel:SetFrameStrata("DIALOG")
 panel:SetMovable(true)
 panel:SetClampedToScreen(true)
@@ -170,7 +183,7 @@ watchlistHint:SetText("|cffd9bd75自动翻页期间请勿在 AH 切换搜索；�
 
 local watchScroll = CreateFrame("ScrollFrame", "AuctionCollectorWatchlistScroll", panel, "UIPanelScrollFrameTemplate")
 watchScroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, -580)
-watchScroll:SetSize(580, 120)
+watchScroll:SetSize(580, watchlistHeight)
 watchScroll:EnableMouseWheel(true)
 local watchChild = CreateFrame("Frame", nil, watchScroll)
 watchChild:SetSize(535, 1)
@@ -183,11 +196,11 @@ emptyWatchlist:SetText("清单为空；填写物品名称与 ID 后加入。")
 
 local function createWatchRow()
     local row = {
-        scan = button(watchChild, "", 493, 25),
-        remove = button(watchChild, "×", 30, 25),
+        scan = button(watchChild, "", 230, 25),
+        remove = button(watchChild, "×", 28, 25),
     }
     row.scan:SetPoint("TOPLEFT", watchChild, "TOPLEFT", 0, 0)
-    row.remove:SetPoint("TOPLEFT", watchChild, "TOPLEFT", 500, 0)
+    row.remove:SetPoint("TOPLEFT", watchChild, "TOPLEFT", 235, 0)
     return row
 end
 
@@ -199,8 +212,11 @@ local function renderWatchlist(state)
         watchRows[i] = row
         row.scan:ClearAllPoints()
         row.remove:ClearAllPoints()
-        row.scan:SetPoint("TOPLEFT", watchChild, "TOPLEFT", 0, -((i - 1) * 28))
-        row.remove:SetPoint("TOPLEFT", watchChild, "TOPLEFT", 500, -((i - 1) * 28))
+        local column = (i - 1) % 2
+        local line = math.floor((i - 1) / 2)
+        local columnOffset = column * 270
+        row.scan:SetPoint("TOPLEFT", watchChild, "TOPLEFT", columnOffset, -(line * 28))
+        row.remove:SetPoint("TOPLEFT", watchChild, "TOPLEFT", columnOffset + 235, -(line * 28))
         row.scan:SetText(item.name .. "  ·  ID " .. tostring(item.item_id))
         local itemIndex = i
         row.scan:SetScript("OnClick", function()
@@ -220,7 +236,7 @@ local function renderWatchlist(state)
     end
     if #items == 0 then emptyWatchlist:Show()
     else emptyWatchlist:Hide() end
-    watchChild:SetHeight(math.max(24, #items * 28))
+    watchChild:SetHeight(math.max(24, math.ceil(#items / 2) * 28))
     if watchScroll.UpdateScrollChildRect then watchScroll:UpdateScrollChildRect() end
     if #items == 0 and watchScroll.SetVerticalScroll then watchScroll:SetVerticalScroll(0) end
     if addButton.Enable then
@@ -238,22 +254,24 @@ end
 
 watchScroll:SetScript("OnMouseWheel", function(self, delta)
     local current = self:GetVerticalScroll() or 0
-    local maximum = math.max(0, (#(API.GetWatchlist()) * 28) - 120)
+    local itemCount = #(API.GetWatchlist())
+    local contentHeight = math.max(24, math.ceil(itemCount / 2) * 28)
+    local maximum = math.max(0, contentHeight - watchlistHeight)
     self:SetVerticalScroll(math.max(0, math.min(maximum, current - delta * 28)))
 end)
 
 local stopButton = button(panel, "停止自动翻页", 175, 28)
-stopButton:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, -714)
+stopButton:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, -(580 + watchlistHeight + 14))
 stopButton:SetScript("OnClick", function()
     if type(API.StopAutoScan) == "function" then API.StopAutoScan() end
 end)
 local probeButton = button(panel, "检测 API", 125, 28)
-probeButton:SetPoint("TOPLEFT", panel, "TOPLEFT", 205, -714)
+probeButton:SetPoint("TOPLEFT", panel, "TOPLEFT", 205, -(580 + watchlistHeight + 14))
 probeButton:SetScript("OnClick", function()
     if type(API.Probe) == "function" then API.Probe() end
 end)
 local saveButton = button(panel, "写盘并重载游戏界面", 215, 28)
-saveButton:SetPoint("TOPLEFT", panel, "TOPLEFT", 340, -714)
+saveButton:SetPoint("TOPLEFT", panel, "TOPLEFT", 340, -(580 + watchlistHeight + 14))
 saveButton:SetScript("OnClick", function()
     if InCombatLockdown and InCombatLockdown() then
         if DEFAULT_CHAT_FRAME then
@@ -263,7 +281,7 @@ saveButton:SetScript("OnClick", function()
     end
     if type(ReloadUI) == "function" then ReloadUI() end
 end)
-local footer = textLine("footer", 22, -750, 570, 22)
+local footer = textLine("footer", 22, -(580 + watchlistHeight + 50), 570, 22)
 footer:SetText("|cff91a7c0Esc 关闭面板但不停止采集；完整结果需重载/登出后才写入 SavedVariables。|r")
 
 local function clock(ts)

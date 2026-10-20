@@ -16,6 +16,9 @@ local methods = {}
 function methods:SetScript(event, fn) self.scripts[event] = fn end
 function methods:RegisterEvent(event) self.events[event] = true end
 function methods:SetPoint(...) self.point={...} end
+function methods:SetSize(width, height) self.width=width self.height=height end
+function methods:SetHeight(height) self.height=height end
+function methods:GetHeight() return self.height end
 function methods:ClearAllPoints() self.point=nil end
 function methods:SetText(value) self.text = value end
 function methods:GetText() return self.text end
@@ -51,6 +54,7 @@ function CreateFrame(frameType,name,parent,template)
     return frame(name,frameType,parent,template)
 end
 UIParent=frame("UIParent","Frame")
+UIParent:SetSize(1280,823)
 UISpecialFrames={}
 DEFAULT_CHAT_FRAME={AddMessage=function(_,message) chat[#chat + 1] = message end}
 SlashCmdList={}
@@ -152,6 +156,13 @@ local panel
 for _,v in ipairs(made) do
     if v.name=="AuctionCollectorStatusPanel" then panel=v end
 end
+local watchScroll
+for _,v in ipairs(made) do
+    if v.name=="AuctionCollectorWatchlistScroll" then watchScroll=v end
+end
+assert(panel and panel.height==803,"panel should fit and use the available screen height")
+assert(panel.point[1]=="TOP" and panel.point[5]==-10,"panel should be raised and top-anchored")
+assert(watchScroll and watchScroll.height==133,"watchlist should expand to the available panel height")
 assert(editBoxes[1].scripts.OnEscapePressed,"focused fields should handle Escape")
 editBoxes[1].scripts.OnEscapePressed(editBoxes[1])
 assert(panel and not panel:IsShown(),"Escape should close the panel while an input is focused")
@@ -166,6 +177,8 @@ for _,v in ipairs(made) do
         and string.find(v.text,"测试合剂",1,true) then customScan=v end
 end
 assert(customScan,"custom item should appear in the dashboard")
+assert(customScan.point[5]==-84 and customScan.point[4]==270,
+    "watchlist entries should use two columns so eight entries fit without scrolling")
 local removed=false
 for _,v in ipairs(made) do
     if v.parent==customScan.parent and v.text=="×" and v.scripts.OnClick

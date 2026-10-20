@@ -2,7 +2,7 @@
 ## Title: AuctionCollector
 ## Notes: User-started auction-house collection with paginated snapshots (Classic Era / Hardcore)
 ## Author: delinecnlin
-## Version: 0.4.0-alpha
+## Version: 0.4.1-alpha
 ## SavedVariables: AuctionCollectorDB
 ## DefaultState: Enabled
 
