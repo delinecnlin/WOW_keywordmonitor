@@ -182,7 +182,8 @@ assert(customScan.point[5]==-84 and customScan.point[4]==270,
 local removed=false
 for _,v in ipairs(made) do
     if v.parent==customScan.parent and v.text=="×" and v.scripts.OnClick
-        and v.point and customScan.point and v.point[5]==customScan.point[5] then
+        and v.point and customScan.point and v.point[4]==customScan.point[4]+235
+        and v.point[5]==customScan.point[5] then
         v.scripts.OnClick(v)
         removed=true
         break
