@@ -4,7 +4,7 @@ local API = AuctionCollector
 if type(API) ~= "table" then return end
 
 local panel = CreateFrame("Frame", "AuctionCollectorStatusPanel", UIParent)
-panel:SetSize(574, 594)
+panel:SetSize(574, 748)
 panel:SetPoint("CENTER", UIParent, "CENTER", 205, 0)
 panel:SetFrameStrata("DIALOG")
 panel:SetMovable(true)
@@ -47,14 +47,14 @@ local function divider(y)
 end
 
 local title = textLine("title", 20, -18, 470, 26, "GameFontNormalLarge")
-title:SetText("|cff79c6ffAuctionCollector|r  |cff9eb7d2· 数据采集状态|r")
+title:SetText("|cff79c6ffAuctionCollector|r  |cff9eb7d2· 手动数据采集|r")
 local subtitle = textLine("subtitle", 20, -49, 515, 20)
-subtitle:SetText("硬核服 / 联盟 · 黑莲花市场研究 · 手动采样")
+subtitle:SetText("国服经典旧世 · 物品清单逐项采集 · 不做插件内分析")
 
-local function button(label, x, width, callback)
+local function button(label, x, width, y, callback)
     local b = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     b:SetSize(width, 28)
-    b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -523)
+    b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
     b:SetText(label)
     b:SetScript("OnClick", callback)
     return b
@@ -87,27 +87,43 @@ local latest2 = textLine("latest2", 22, -294, 526, 22)
 local latest3 = textLine("latest3", 22, -316, 526, 22)
 divider(-343)
 
-local historyTitle = textLine("history", 22, -357, 523, 22, "GameFontNormal")
+local watchlistTitle = textLine("watchlist", 22, -357, 530, 22, "GameFontNormal")
+watchlistTitle:SetText("|cff82bffd采集物品清单|r  |cff9eb7c0点击物品名，手动查询该物品第一页|r")
+local watchButtons = {}
+local watchlist = type(API.GetWatchlist) == "function" and API.GetWatchlist() or {}
+for i, item in ipairs(watchlist) do
+    local itemIndex = i
+    local column = (i - 1) % 3
+    local row = math.floor((i - 1) / 3)
+    local b = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    b:SetSize(170, 24)
+    b:SetPoint("TOPLEFT", panel, "TOPLEFT", 20 + column * 178, -382 - row * 26)
+    b:SetText(item.name)
+    b:SetScript("OnClick", function()
+        if type(API.ScanWatchlistItem) == "function" then API.ScanWatchlistItem(itemIndex) end
+    end)
+    watchButtons[#watchButtons + 1] = b
+end
+
+divider(-493)
+local historyTitle = textLine("history", 22, -506, 523, 22, "GameFontNormal")
 local history = {
-    textLine("history1", 22, -385, 524, 22),
-    textLine("history2", 22, -406, 524, 22),
-    textLine("history3", 22, -427, 524, 22),
+    textLine("history1", 22, -532, 524, 22),
+    textLine("history2", 22, -553, 524, 22),
+    textLine("history3", 22, -574, 524, 22),
 }
 
-divider(-454)
-local diskState = textLine("disk", 22, -467, 525, 23, "GameFontHighlight")
-local diskHint = textLine("hint", 22, -490, 525, 25)
+divider(-604)
+local diskState = textLine("disk", 22, -617, 525, 23, "GameFontHighlight")
+local diskHint = textLine("hint", 22, -640, 525, 25)
 
-local scanButton = button("扫描黑莲花", 20, 125, function()
-    if type(API.ScanLotus) == "function" then API.ScanLotus() end
-end)
-local nextButton = button("扫描下一页", 151, 121, function()
+local nextButton = button("手动扫描下一页", 20, 170, -676, function()
     if type(API.ScanNext) == "function" then API.ScanNext() end
 end)
-local probeButton = button("检测 API", 278, 106, function()
+local probeButton = button("检测 API", 202, 150, -676, function()
     if type(API.Probe) == "function" then API.Probe() end
 end)
-local saveButton = button("写盘并重载", 391, 161, function()
+local saveButton = button("保存并重载游戏界面", 362, 192, -676, function()
     if InCombatLockdown and InCombatLockdown() then
         if DEFAULT_CHAT_FRAME then
             DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00[AuctionCollector]|r 战斗中不执行界面重载。")
@@ -116,8 +132,8 @@ local saveButton = button("写盘并重载", 391, 161, function()
     end
     if type(ReloadUI) == "function" then ReloadUI() end
 end)
-local footer = textLine("footer", 22, -559, 526, 25)
-footer:SetText("|cff91a7c0注意：只采集 AH 可见分页数据；挂牌不代表成交。点击顶部可拖动窗口。|r")
+local footer = textLine("footer", 22, -710, 526, 22)
+footer:SetText("|cff91a7c0所有项目使用同一套挂单字段；每页需手动查询。挂牌不代表成交。|r")
 
 local function clock(ts)
     if type(ts) ~= "number" or ts <= 0 then return "未知" end
@@ -182,7 +198,7 @@ function API.RefreshPanel()
         .. "|r 页     当前缓存：|cffffffff" .. state.totalPages .. "/" .. state.maxPages .. "|r 页")
 
     local latest = state.latest
-    recentTitle:SetText("|cff82bffd最近一次扫描|r")
+    recentTitle:SetText("|cff82bffd最近一次采集|r")
     if latest then
         local rows, quantity, known, timeLeftKnown = scanStats(latest)
         latest1:SetText("采集时间：" .. clock(latest.observed_at)
@@ -197,8 +213,8 @@ function API.RefreshPanel()
             .. "    扫描：" .. tostring(latest.duration_ms or "?") .. " ms")
     else
         latest1:SetText("尚未取得任何扫描结果。")
-        latest2:SetText("打开拍卖行，点击下方「扫描黑莲花」。")
-        latest3:SetText("一次仅扫描一页；可手动点击「扫描下一页」。")
+        latest2:SetText("打开拍卖行，点击下方清单中的物品名称开始采集。")
+        latest3:SetText("一次仅查询一个物品的一页；需要时可手动翻页。")
     end
 
     historyTitle:SetText("|cff82bffd最近 3 条扫描记录|r")
@@ -225,9 +241,13 @@ function API.RefreshPanel()
         diskState:SetText("|cffb5c4d6当前没有已读回的存档数据|r")
         diskHint:SetText("先人工扫描；插件无法直接检查 Mac 文件是否已经写入。")
     end
-    if scanButton.Enable then
-        if state.pending or not state.legacyAPIAvailable then scanButton:Disable() else scanButton:Enable() end
-        if state.pending or not state.legacyAPIAvailable then nextButton:Disable() else nextButton:Enable() end
+    if nextButton.Enable then
+        local disabled = state.pending or not state.legacyAPIAvailable
+        if disabled then nextButton:Disable() else nextButton:Enable() end
+        if disabled then probeButton:Disable() else probeButton:Enable() end
+        for _, b in ipairs(watchButtons) do
+            if disabled then b:Disable() else b:Enable() end
+        end
     end
 end
 

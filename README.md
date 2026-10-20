@@ -5,7 +5,7 @@
 | 子项目 | 路径 | 状态 |
 | --- | --- | --- |
 | WOW Keyword Monitor | `addons/KeywordMonitor/` | 现有关键词插件，`/wkm` |
-| AuctionCollector | `addons/AuctionCollector/` | 新增 AH 人工采集试验插件，`/ac` |
+| AuctionCollector | `addons/AuctionCollector/` | AH 多物品人工采集器，不含插件内分析，`/ac` |
 | Mac Sync | `apps/mac-sync/` | SavedVariables 导入 |
 | Market API & Research | `services/` | 数据存储、市场研究、回归基线 |
 | Azure Global | `deploy/azure/` | 国际版 Azure 部署方案 |
