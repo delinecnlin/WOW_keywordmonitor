@@ -1,5 +1,5 @@
 -- AuctionCollector dashboard and editable watchlist.
--- Each scan is started by an explicit user click; only pages for that item auto-continue.
+-- Scans start from an explicit user click; a user may choose one item or the full list.
 local API = AuctionCollector
 if type(API) ~= "table" then return end
 
@@ -79,7 +79,7 @@ end
 local title = textLine("title", 20, -18, 540, 26, "GameFontNormalLarge")
 title:SetText("|cff79c6ffAuctionCollector|r  |cff9eb7d2· 国服拍卖信息采集|r")
 local subtitle = textLine("subtitle", 20, -49, 570, 20)
-subtitle:SetText("点选一个物品开始采集；插件自动翻完该物品分页，不会自动切换其他物品")
+subtitle:SetText("可单独采集一个物品，或按清单顺序全部采集；自动翻完每个物品分页")
 
 local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
 close:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -4, -4)
@@ -119,8 +119,13 @@ divider(-428)
 local diskState = textLine("disk", 22, -437, 560, 22, "GameFontHighlight")
 local diskHint = textLine("hint", 22, -458, 560, 23)
 
-local watchlistTitle = textLine("watchlist", 22, -485, 565, 22, "GameFontNormal")
-watchlistTitle:SetText("|cff82bffd采集物品清单|r  |cff9eb7c0点击采集；每项右侧 × 可移除|r")
+local watchlistTitle = textLine("watchlist", 22, -485, 420, 22, "GameFontNormal")
+watchlistTitle:SetText("|cff82bffd采集物品清单|r  |cff9eb7c0点单项采集；× 移除|r")
+local scanAllButton = button(panel, "全部采集", 125, 27)
+scanAllButton:SetPoint("TOPLEFT", panel, "TOPLEFT", 455, -480)
+scanAllButton:SetScript("OnClick", function()
+    if type(API.ScanAllWatchlist) == "function" then API.ScanAllWatchlist() end
+end)
 
 local nameLabel = textLine("nameLabel", 22, -511, 250, 18)
 nameLabel:SetText("物品名称（按国服 AH 显示名填写）")
@@ -179,7 +184,7 @@ addButton:SetScript("OnClick", function()
 end)
 
 local watchlistHint = textLine("watchlistHint", 22, -557, 570, 20)
-watchlistHint:SetText("|cffd9bd75自动翻页期间请勿在 AH 切换搜索；如需中止可点下方停止按钮。|r")
+watchlistHint:SetText("|cffd9bd75「全部采集」按清单顺序逐项翻页；采集中勿切换 AH 搜索，可随时停止。|r")
 
 local watchScroll = CreateFrame("ScrollFrame", "AuctionCollectorWatchlistScroll", panel, "UIPanelScrollFrameTemplate")
 watchScroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, -580)
@@ -250,6 +255,8 @@ local function renderWatchlist(state)
             idInput:Enable()
         end
     end
+    if busy or #items == 0 then scanAllButton:Disable()
+    else scanAllButton:Enable() end
 end
 
 watchScroll:SetScript("OnMouseWheel", function(self, delta)
@@ -343,7 +350,18 @@ function API.RefreshPanel()
     local state = API.GetState()
     local color = COLOR[state.status] or COLOR.empty
     dot:SetColorTexture(color[1], color[2], color[3], 1)
-    statusTitle:SetText(STATUS[state.status] or "正在初始化")
+    local statusLabel = STATUS[state.status] or "正在初始化"
+    if state.allScanning then
+        statusLabel = "全部采集中 · " .. tostring(state.sweepItemIndex or 1)
+            .. "/" .. tostring(state.sweepItemCount or 0) .. " 项"
+    elseif state.status == "completed" and state.lastBatch
+        and state.lastBatch.query == "全部采集" then
+        statusLabel = "全部采集完成"
+    elseif state.status == "stopped" and state.lastBatch
+        and state.lastBatch.query == "全部采集" then
+        statusLabel = "全部采集已停止"
+    end
+    statusTitle:SetText(statusLabel)
     statusDetail:SetText(state.message or "等待操作")
 
     local f = state.faction == "Alliance" and "联盟" or tostring(state.faction or "?")
@@ -373,7 +391,7 @@ function API.RefreshPanel()
             .. "    查询耗时：" .. tostring(latest.duration_ms or "?") .. " ms")
     else
         latest1:SetText("尚未取得任何扫描结果。")
-        latest2:SetText("点击下方一个物品开始；自动翻页只查询该物品。")
+        latest2:SetText("点选单项或「全部采集」开始；完整结果需写入 SavedVariables。")
         latest3:SetText("扫描完成后仍需写入 SavedVariables，才可从 Mac 导入。")
     end
 
@@ -406,7 +424,7 @@ function API.RefreshPanel()
     if stopButton.Enable then
         local stopping = state.status == "stopping"
         if state.autoScanning and not stopping then
-            stopButton:SetText("停止自动翻页")
+            stopButton:SetText(state.allScanning and "停止全部采集" or "停止自动翻页")
             stopButton:Enable()
         elseif stopping then
             stopButton:SetText("正在停止…")

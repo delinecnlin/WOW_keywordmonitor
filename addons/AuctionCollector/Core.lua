@@ -5,6 +5,7 @@ local API = AuctionCollector
 
 local pending = nil
 local activeBatch = nil
+local activeSweep = nil
 local lastQuery = nil
 local lastQueryItemId = nil
 local sequence = 0
@@ -136,13 +137,29 @@ local function setBatchScanMetadata(batch, status, complete)
     end
 end
 
+local beginPage, startSweepItem
+
 local function stopBatch(batch, status, message)
     if not batch or activeBatch ~= batch then return end
     setBatchScanMetadata(batch, status == "error" and "failed" or "stopped", false)
-    session.lastBatch = {
-        id = batch.id, query = batch.query, pages = #batch.scans,
-        rows = batch.rowCount, complete = false,
-    }
+    local sweep = batch.sweep
+    if sweep and activeSweep == sweep then
+        sweep.pages = sweep.pages + #batch.scans
+        sweep.rows = sweep.rows + batch.rowCount
+        session.lastBatch = {
+            id = sweep.id, query = "全部采集", pages = sweep.pages,
+            rows = sweep.rows, complete = false,
+            item_count = #sweep.items, completed_items = sweep.completedItems,
+        }
+        activeSweep = nil
+        message = message .. " 全部采集已终止，已完成 "
+            .. tostring(sweep.completedItems) .. "/" .. tostring(#sweep.items) .. " 个物品。"
+    else
+        session.lastBatch = {
+            id = batch.id, query = batch.query, pages = #batch.scans,
+            rows = batch.rowCount, complete = false,
+        }
+    end
     activeBatch = nil
     setStatus(status, message)
     say(message)
@@ -151,18 +168,53 @@ end
 local function completeBatch(batch)
     if not batch or activeBatch ~= batch then return end
     setBatchScanMetadata(batch, "complete", true)
+    activeBatch = nil
+    local message = batch.query .. " 自动采集完成：" .. tostring(#batch.scans)
+        .. " 页、" .. tostring(batch.rowCount) .. " 条挂单；数据在内存中，待写盘。"
+    local sweep = batch.sweep
+    if sweep and activeSweep == sweep then
+        sweep.completedItems = sweep.completedItems + 1
+        sweep.pages = sweep.pages + #batch.scans
+        sweep.rows = sweep.rows + batch.rowCount
+        if batch.stop_requested then
+            activeSweep = nil
+            session.lastBatch = {
+                id = sweep.id, query = "全部采集", pages = sweep.pages,
+                rows = sweep.rows, complete = false,
+                item_count = #sweep.items, completed_items = sweep.completedItems,
+            }
+            local stoppedMessage = "全部采集已停止：已完成 "
+                .. tostring(sweep.completedItems) .. "/" .. tostring(#sweep.items)
+                .. " 个物品；数据在内存中，待写盘。"
+            setStatus("stopped", stoppedMessage)
+            say(stoppedMessage)
+            return
+        end
+        if sweep.currentIndex < #sweep.items then
+            startSweepItem(sweep, sweep.currentIndex + 1)
+            return
+        end
+        activeSweep = nil
+        session.lastBatch = {
+            id = sweep.id, query = "全部采集", pages = sweep.pages,
+            rows = sweep.rows, complete = true,
+            item_count = #sweep.items, completed_items = sweep.completedItems,
+        }
+        message = "全部采集完成：" .. tostring(sweep.completedItems) .. " 个物品、"
+            .. tostring(sweep.pages) .. " 页、" .. tostring(sweep.rows)
+            .. " 条挂单；数据在内存中，待写盘。"
+        setStatus("completed", message)
+        say(message)
+        return
+    end
     session.lastBatch = {
         id = batch.id, query = batch.query, pages = #batch.scans,
         rows = batch.rowCount, complete = true,
     }
-    activeBatch = nil
-    local message = batch.query .. " 自动采集完成：" .. tostring(#batch.scans)
-        .. " 页、" .. tostring(batch.rowCount) .. " 条挂单；数据在内存中，待写盘。"
     setStatus("completed", message)
     say(message)
 end
 
-local beginPage
 local function scheduleAutoRetry(batch)
     if activeBatch ~= batch or batch.stop_requested then return end
     if not C_Timer or type(C_Timer.After) ~= "function" then
@@ -233,7 +285,10 @@ beginPage = function(query, page, expectedItemId, batch)
     if not can then
         if batch then
             batch.nextPage = page
-            setStatus("auto_wait", "自动翻页等待 AH 查询冷却，即将查询第 " .. tostring(page + 1) .. " 页。")
+            local prefix = batch.sweep and ("全部采集 " .. tostring(batch.sweep.currentIndex)
+                .. "/" .. tostring(#batch.sweep.items) .. "：") or ""
+            setStatus("auto_wait", prefix .. "自动翻页等待 AH 查询冷却，即将查询第 "
+                .. tostring(page + 1) .. " 页。")
             scheduleAutoRetry(batch)
         else
             setStatus("cooldown", "查询冷却中，本次未发送请求")
@@ -252,7 +307,10 @@ beginPage = function(query, page, expectedItemId, batch)
     pending = request
     if batch then
         batch.nextPage = page
-        setStatus("pending", "自动采集 " .. query .. "：正在查询第 " .. tostring(page + 1) .. " 页。")
+        local prefix = batch.sweep and ("全部采集 " .. tostring(batch.sweep.currentIndex)
+            .. "/" .. tostring(#batch.sweep.items) .. "：") or ""
+        setStatus("pending", prefix .. "自动采集 " .. query
+            .. "：正在查询第 " .. tostring(page + 1) .. " 页。")
     else
         setStatus("pending", "正在等待：" .. query .. " 第 " .. tostring(page + 1) .. " 页")
     end
@@ -286,6 +344,21 @@ beginPage = function(query, page, expectedItemId, batch)
         end)
     end
     return true
+end
+
+startSweepItem = function(sweep, index)
+    if not sweep or activeSweep ~= sweep then return false end
+    local item = sweep.items[index]
+    if not item then return false end
+    sweep.currentIndex = index
+    local batch = {
+        id = tostring(now()) .. "-collection-" .. tostring(sequence + 1),
+        query = item.name, item_id = item.item_id,
+        nextPage = 0, rowCount = 0, scans = {}, cooldownRetries = 0,
+        sweep = sweep,
+    }
+    activeBatch = batch
+    return beginPage(item.name, 0, item.item_id, batch)
 end
 
 local function resultHasMore(request, num, total)
@@ -512,7 +585,11 @@ function API.GetState()
         status = session.status,
         message = session.message,
         pending = pending ~= nil,
-        autoScanning = activeBatch ~= nil,
+        autoScanning = activeBatch ~= nil or activeSweep ~= nil,
+        allScanning = activeSweep ~= nil,
+        sweepItemIndex = activeSweep and activeSweep.currentIndex or nil,
+        sweepItemCount = activeSweep and #activeSweep.items or nil,
+        sweepCompletedItems = activeSweep and activeSweep.completedItems or nil,
         autoQuery = activeBatch and activeBatch.query or nil,
         autoPage = activeBatch and (activeBatch.nextPage + 1) or nil,
         autoPagesDone = activeBatch and #activeBatch.scans or 0,
@@ -547,7 +624,7 @@ end
 
 function API.AddWatchlistItem(name, itemId)
     initialize()
-    if activeBatch or pending then
+    if activeBatch or activeSweep or pending then
         say("采集进行中，请结束或停止后再修改清单。")
         return false
     end
@@ -574,7 +651,7 @@ end
 function API.RemoveWatchlistItem(index)
     initialize()
     index = tonumber(index)
-    if activeBatch or pending then
+    if activeBatch or activeSweep or pending then
         say("采集进行中，请结束或停止后再修改清单。")
         return false
     end
@@ -596,9 +673,9 @@ function API.ScanWatchlistItem(index)
         say("物品清单序号无效；输入 /ac items 查看清单。")
         return
     end
-    if pending or activeBatch then
+    if pending or activeBatch or activeSweep then
         setStatus(activeBatch and "auto_wait" or "pending",
-            "当前查询尚未完成；请等待自动翻页结束或先停止。")
+            "当前采集尚未完成；请等待或先停止后再开始其他采集。")
         return
     end
     local item = AuctionCollectorDB.watchlist[index]
@@ -610,6 +687,31 @@ function API.ScanWatchlistItem(index)
     activeBatch = batch
     session.lastBatch = nil
     beginPage(item.name, 0, item.item_id, batch)
+end
+
+function API.ScanAllWatchlist()
+    initialize()
+    if pending or activeBatch or activeSweep then
+        setStatus(activeSweep and "auto_wait" or (activeBatch and "auto_wait" or "pending"),
+            "当前采集尚未完成；请等待或先停止，再开始全部采集。")
+        return false
+    end
+    local items = API.GetWatchlist()
+    if #items == 0 then
+        setStatus("error", "采集物品清单为空；请先添加物品。")
+        return false
+    end
+    local sweep = {
+        id = tostring(now()) .. "-all-" .. tostring(sequence + 1),
+        items = items, currentIndex = 0, completedItems = 0,
+        pages = 0, rows = 0,
+    }
+    activeSweep = sweep
+    session.lastBatch = nil
+    say("已启动全部采集：共 " .. tostring(#items)
+        .. " 个物品，按清单顺序扫描；可随时停止。")
+    startSweepItem(sweep, 1)
+    return true
 end
 
 API.ScanLotus = function()
@@ -627,6 +729,18 @@ end
 API.StopAutoScan = function()
     local batch = activeBatch
     if not batch then
+        if activeSweep then
+            local sweep = activeSweep
+            activeSweep = nil
+            session.lastBatch = {
+                id = sweep.id, query = "全部采集", pages = sweep.pages,
+                rows = sweep.rows, complete = false,
+                item_count = #sweep.items, completed_items = sweep.completedItems,
+            }
+            setStatus("stopped", "全部采集已停止：已完成 "
+                .. tostring(sweep.completedItems) .. "/" .. tostring(#sweep.items) .. " 个物品。")
+            return true
+        end
         say("当前没有正在进行的自动翻页。")
         return false
     end
@@ -641,7 +755,7 @@ API.StopAutoScan = function()
 end
 
 API.ScanNext = function()
-    if activeBatch then
+    if activeBatch or activeSweep then
         setStatus("pending", "正在自动翻页；无需手动点下一页。")
         return
     end
@@ -704,6 +818,10 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         else API.ScanWatchlistItem(argument) end
         return
     end
+    if command == "all" then
+        API.ScanAllWatchlist()
+        return
+    end
     if command == "stop" then
         API.StopAutoScan()
         return
@@ -728,7 +846,7 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         say("为避免误删研究数据，暂不提供游戏内清空功能，请先导出并自行清理 SavedVariables。")
         return
     end
-    say("命令：/ac 打开面板、/ac items、/ac scan 序号、/ac lotus、/ac stop、/ac status")
+    say("命令：/ac 打开面板、/ac items、/ac scan 序号、/ac all、/ac lotus、/ac stop、/ac status")
 end
 
 AC:RegisterEvent("ADDON_LOADED")
@@ -746,7 +864,7 @@ AC:SetScript("OnEvent", function(self, event, arg)
         else
             setStatus("empty", "尚无存档数据；请打开拍卖行开始采集")
         end
-        say("已加载。点击物品开始采集；自动翻页完成后按 Esc 可关闭面板。")
+        say("已加载。可点选单项或「全部采集」；自动分页完成后按 Esc 可关闭面板。")
     elseif event == "AUCTION_ITEM_LIST_UPDATE" then
         collect()
     elseif event == "AUCTION_HOUSE_SHOW" then

@@ -11,6 +11,7 @@ local resultItemId = 13468
 local sellerNamesResolved = false
 local canSend = true
 local queryThrows = false
+local autoMatchRequested = true
 
 local methods = {}
 function methods:SetScript(event, fn) self.scripts[event] = fn end
@@ -70,6 +71,15 @@ function QueryAuctionItems(...)
     assert(type(queryArguments[1])=="string" and #queryArguments[1]>0)
     assert(type(queryArguments[4])=="number" and queryArguments[4]>=0)
     queryCount = queryCount + 1
+    if autoMatchRequested and AuctionCollector then
+        for _,item in ipairs(AuctionCollector.GetWatchlist()) do
+            if item.name==queryArguments[1] then
+                resultItemName=item.name
+                resultItemId=item.item_id
+                break
+            end
+        end
+    end
 end
 function GetNumAuctionItems() return scannedRows, reportedTotal end
 function GetAuctionItemInfo(_,index)
@@ -344,6 +354,7 @@ assert(AuctionCollector.GetState().totalPages==pagesBeforeTimeout)
 -- A different item's result fails closed and stops the entire auto batch.
 resultItemName="血色十字军"
 resultItemId=12345
+autoMatchRequested=false
 AuctionCollector.ScanLotus()
 fire("AUCTION_ITEM_LIST_UPDATE")
 state=AuctionCollector.GetState()
@@ -351,6 +362,7 @@ assert(state.status=="error" and not state.autoScanning)
 assert(string.find(state.message,"不一致",1,true))
 resultItemName="黑莲花"
 resultItemId=13468
+autoMatchRequested=true
 
 -- Three result pages are queried in sequence, with one user click and cooldown waits.
 sellerNamesResolved=true
@@ -447,5 +459,48 @@ AuctionCollector.ScanLotus()
 fire("AUCTION_HOUSE_CLOSED")
 state=AuctionCollector.GetState()
 assert(state.status=="stopped" and not state.pending and not state.autoScanning)
+
+-- One button scans every current watchlist item in order, one item at a time.
+sellerNamesResolved=true
+scannedRows=2
+reportedTotal=2
+local sweepItems=AuctionCollector.GetWatchlist()
+local sweepPagesBefore=AuctionCollector.GetState().totalPages
+local sweepQueriesBefore=queryCount
+clickButton("全部采集")
+state=AuctionCollector.GetState()
+assert(state.allScanning and state.sweepItemIndex==1 and state.sweepItemCount==#sweepItems)
+assert(queryArguments[1]==sweepItems[1].name and queryArguments[4]==0)
+for i,item in ipairs(sweepItems) do
+    assert(queryArguments[1]==item.name and queryArguments[4]==0,
+        "all-scan should query each item from its first page in watchlist order")
+    fire("AUCTION_ITEM_LIST_UPDATE")
+    state=AuctionCollector.GetState()
+    if i<#sweepItems then
+        assert(state.allScanning and state.sweepItemIndex==i+1)
+        assert(queryArguments[1]==sweepItems[i+1].name and queryArguments[4]==0)
+    else
+        assert(state.status=="completed" and not state.autoScanning and not state.allScanning)
+    end
+end
+assert(state.lastBatch.query=="全部采集" and state.lastBatch.complete)
+assert(state.lastBatch.item_count==#sweepItems and state.lastBatch.completed_items==#sweepItems)
+assert(state.lastBatch.pages==#sweepItems and state.totalPages==sweepPagesBefore+#sweepItems)
+assert(queryCount==sweepQueriesBefore+#sweepItems)
+
+-- Stopping an all-scan saves the current response and never starts the next item.
+local stopSweepQueries=queryCount
+clickButton("全部采集")
+assert(AuctionCollector.GetState().allScanning)
+fire("AUCTION_ITEM_LIST_UPDATE")
+state=AuctionCollector.GetState()
+assert(state.allScanning and state.sweepItemIndex==2 and queryCount==stopSweepQueries+2)
+assert(AuctionCollector.StopAutoScan())
+assert(AuctionCollector.GetState().status=="stopping")
+fire("AUCTION_ITEM_LIST_UPDATE")
+state=AuctionCollector.GetState()
+assert(state.status=="stopped" and not state.allScanning and not state.autoScanning)
+assert(state.lastBatch.query=="全部采集" and not state.lastBatch.complete)
+assert(state.lastBatch.completed_items==2 and queryCount==stopSweepQueries+2)
 
 print("AuctionCollector editable watchlist and auto-pagination mock: PASS")
