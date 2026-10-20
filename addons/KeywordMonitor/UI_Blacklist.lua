@@ -130,6 +130,11 @@ function WKM:CreateBlacklistPanel(panel)
         WKM:RefreshBlacklistUI()
     end)
 
+    -- A hidden panel has no OnUpdate; clear any floating preview now.
+    panel:SetScript("OnHide", function()
+        WKM:DismissHistoryPreview()
+    end)
+
     panel.tick = 0
     panel.hoverCheck = 0
     panel.hoveredRow = nil
