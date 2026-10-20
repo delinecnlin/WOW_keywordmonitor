@@ -298,6 +298,12 @@ function WKM:CreateHistoryPanel(panel)
         WKM:RefreshHistoryUI()
     end)
 
+    -- Hidden panels no longer receive OnUpdate. Cleanup must happen
+    -- at hide time to prevent a full-text preview lingering on screen.
+    panel:SetScript("OnHide", function()
+        WKM:DismissHistoryPreview()
+    end)
+
     panel.tick = 0
     panel.hoverCheck = 0
     panel.hoveredRow = nil
