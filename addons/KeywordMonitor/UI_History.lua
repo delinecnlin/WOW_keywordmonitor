@@ -26,9 +26,12 @@ end
 
 function WKM:EnsureHistoryPreview()
     if self.historyPreview then return self.historyPreview end
+    if not self.mainFrame then return nil end
 
     local tpl = BackdropTemplateMixin and "BackdropTemplate" or nil
-    local preview = CreateFrame("Frame", "WKM_HistoryMessagePreview", UIParent, tpl)
+    -- Parent to the addon window so WoW hides this floating preview
+    -- automatically whenever the main window is closed (including ESC).
+    local preview = CreateFrame("Frame", "WKM_HistoryMessagePreview", self.mainFrame, tpl)
     preview:SetFrameStrata("TOOLTIP")
     preview:SetClampedToScreen(true)
     preview:EnableMouse(false)
@@ -49,8 +52,10 @@ end
 
 function WKM:ShowHistoryEntryTooltip(owner, entry)
     if not owner or not entry then return end
+    if not self.mainFrame or not self.mainFrame:IsShown() or not owner:IsShown() then return end
 
     local preview = self:EnsureHistoryPreview()
+    if not preview then return end
     local text = self.Rules and self.Rules.Sanitize and self.Rules.Sanitize(entry.message) or tostring(entry.message or "")
     preview.text:SetText(text)
 
@@ -69,6 +74,21 @@ end
 function WKM:HideHistoryEntryTooltip()
     if self.historyPreview then
         self.historyPreview:Hide()
+    end
+end
+
+function WKM:DismissHistoryPreview()
+    self:HideHistoryEntryTooltip()
+    -- OnUpdate does not run for a hidden panel; clear cached hovered-row
+    -- state explicitly so reopening the addon can show previews again.
+    local frame = self.mainFrame
+    if not frame then return end
+    for _, panel in ipairs({ frame.historyPanel, frame.blacklistPanel }) do
+        if panel then
+            panel.hoveredRow = nil
+            panel.hoveredEntry = nil
+            panel.hoverCheck = 0
+        end
     end
 end
 
