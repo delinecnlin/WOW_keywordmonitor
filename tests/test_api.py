@@ -37,9 +37,11 @@ class TestAPI(unittest.TestCase):
             "scan_id": "test-001", "observed_at": 1790000000, "realm": "硬核服",
             "faction": "Alliance", "coverage": "single_page", "page": 0,
             "query": "黑莲花", "reported_total": 2, "complete": True,
+            "time_left_api_available": True, "missing_time_left_rows": 1,
             "rows": [
                 {"index": 1, "item_id": 13468, "item_name": "黑莲花", "quantity": 2,
-                 "buyout_copper": 200000, "unit_buyout_copper": 100000, "seller_character": "甲"},
+                 "buyout_copper": 200000, "unit_buyout_copper": 100000, "seller_character": "甲",
+                 "time_left_bucket": 2},
                 {"index": 2, "item_id": 13468, "item_name": "黑莲花", "quantity": 3,
                  "buyout_copper": 300000, "unit_buyout_copper": 100000, "seller_character": None},
             ],
@@ -55,6 +57,17 @@ class TestAPI(unittest.TestCase):
         sellers = self.client.get("/api/sellers", headers=self.auth).json()
         self.assertEqual(sellers["known_fraction"], 2 / 5)
         self.assertEqual(sellers["coverage"], "single_page")
+        history = self.client.get("/api/history", headers=self.auth).json()["snapshots"][0]
+        self.assertTrue(history["time_left_api_available"])
+        self.assertEqual(history["missing_time_left_rows"], 1)
+        self.assertEqual(history["time_left_known_rows"], 1)
+        self.assertEqual(history["time_left_bucket_2_rows"], 1)
+
+        bad = {**scan, "scan_id": "test-invalid-time", "rows": [
+            {**scan["rows"][0], "time_left_bucket": 5}
+        ]}
+        invalid = self.client.post("/api/scans", json={"scans": [bad]}, headers=self.auth)
+        self.assertEqual(invalid.status_code, 422)
 
     def test_forecast_insufficient(self):
         response = self.client.get("/api/research/gold-forecast", headers=self.auth)
@@ -70,6 +83,37 @@ class TestAPI(unittest.TestCase):
         files = module.export(Path(self.temp.name))
         self.assertEqual(len(files), 3)
         self.assertTrue(all(p.stat().st_size > 0 for p in files))
+
+    def test_additive_migration_for_existing_database(self):
+        import tempfile
+        old_db = Path(self.temp.name) / "old-schema.duckdb"
+        con = self.module.duckdb.connect(str(old_db))
+        con.execute("""CREATE TABLE scans (
+            scan_id VARCHAR PRIMARY KEY, observed_at BIGINT, realm VARCHAR, faction VARCHAR,
+            query VARCHAR, page INTEGER, reported_total INTEGER, complete BOOLEAN,
+            coverage VARCHAR, rows_count INTEGER, missing_owner_rows INTEGER,
+            raw_sha256 VARCHAR, ingested_at TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE listings (
+            scan_id VARCHAR, listing_index INTEGER, item_id BIGINT, item_name VARCHAR,
+            quantity BIGINT, buyout_copper BIGINT, unit_buyout_copper BIGINT,
+            seller_character VARCHAR
+        )""")
+        con.close()
+        original = self.module.DB_PATH
+        self.module.DB_PATH = old_db
+        try:
+            migrated = self.module._db()
+            try:
+                scan_columns = {row[0] for row in migrated.execute("DESCRIBE scans").fetchall()}
+                listing_columns = {row[0] for row in migrated.execute("DESCRIBE listings").fetchall()}
+                self.assertIn("time_left_api_available", scan_columns)
+                self.assertIn("missing_time_left_rows", scan_columns)
+                self.assertIn("time_left_bucket", listing_columns)
+            finally:
+                migrated.close()
+        finally:
+            self.module.DB_PATH = original
 
     def test_gold_quote_manual(self):
         q = {"observed_at": 1790000000, "yuan_per_1000g": 64,

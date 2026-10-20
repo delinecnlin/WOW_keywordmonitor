@@ -4,9 +4,25 @@ AuctionCollector = AuctionCollector or {}
 local API = AuctionCollector
 local pending = nil
 local lastQuery = nil
+local lastQueryItemId = nil
 local sequence = 0
 local MAX_SCANS = 80
-local LOTUS = "黑莲花"
+local SELLER_RESOLUTION_WAIT_SECONDS = 2
+-- Names are the Simplified Chinese Classic Era client names. Keep item IDs
+-- alongside them so a stale/shared Legacy result list cannot be mislabeled.
+local WATCHLIST = {
+    {name = "黑莲花", item_id = 13468},
+    {name = "泰坦合剂", item_id = 13510},
+    {name = "精炼智慧合剂", item_id = 13511},
+    {name = "超级能量合剂", item_id = 13512},
+    {name = "多重抗性合剂", item_id = 13513},
+    {name = "化石合剂", item_id = 13506},
+    {name = "格罗姆之血", item_id = 8846},
+    {name = "石鳞鱼油", item_id = 13423},
+    {name = "梦叶草", item_id = 13463},
+    {name = "冰盖草", item_id = 13467},
+    {name = "山鼠草", item_id = 13465},
+}
 -- Only a subsequent /reload/login can confirm WoW has reloaded SavedVariables.
 local session = {
     restoredCount = 0, restoredLatest = nil, newPages = 0,
@@ -67,7 +83,7 @@ local function initialize()
     AuctionCollectorDB.schema_version = 1
 end
 
-local function beginPage(query, page)
+local function beginPage(query, page, expectedItemId)
     if not supported() then
         setStatus("error", "客户端不支持 Legacy AH 查询接口")
         say("此客户端未检测到 Classic QueryAuctionItems API。请记录 /ac probe 结果；尚未支持 C_AuctionHouse。")
@@ -102,6 +118,7 @@ local function beginPage(query, page)
     local request = {
         query = query, page = page, start_ms = (GetTime and GetTime() or 0) * 1000,
         started_at = now(), sequence = sequence,
+        item_id = tonumber(expectedItemId),
     }
     -- Only this explicit user action submits a query. No unattended scanning.
     pending = request
@@ -114,6 +131,7 @@ local function beginPage(query, page)
         return
     end
     lastQuery = query
+    lastQueryItemId = request.item_id
     say("已发送人工查询： " .. query .. " 第 " .. tostring(page + 1) .. " 页，等待 AH 响应。")
     if C_Timer and type(C_Timer.After) == "function" then
         C_Timer.After(30, function()
@@ -126,48 +144,108 @@ local function beginPage(query, page)
     end
 end
 
-local function collect()
+local function collect(forcePartialOwnerCapture)
     if not pending then return end
     local request = pending
-    pending = nil
     local ok, num, total = pcall(GetNumAuctionItems, "list")
     if not ok or type(num) ~= "number" then
+        pending = nil
         setStatus("error", "读取拍卖行列表失败；本次未保存")
         say("无法获取拍卖行列表；本次未保存。")
+        return
+    end
+    if num == 0 then
+        pending = nil
+        -- With no rows, the shared Legacy list cannot identify which query
+        -- produced the update, so show the result but do not persist it.
+        setStatus("empty_result", "AH 返回 0 条；无法核对查询归属，本次未保存")
+        say("AH 当前列表为 0 条；因无法核对查询归属，本次未保存空页。")
         return
     end
     local rows = {}
     local invalid = 0
     local missingOwner = 0
+    local missingTimeLeft = 0
     local missingInfo = 0
+    local getTimeLeft = GetAuctionItemTimeLeft
+    local timeLeftAPIAvailable = type(getTimeLeft) == "function"
+    local mismatchedItem = false
     for index = 1, num do
         local success, name, _, count, _, _, _, _, minBid, minIncrement, buyout, currentBid,
             _, _, owner, ownerFullName, _, itemId, hasAllInfo =
             pcall(GetAuctionItemInfo, "list", index)
         if success and name then
-            local seller = copyString(ownerFullName) or copyString(owner)
-            if not seller then missingOwner = missingOwner + 1 end
-            if hasAllInfo == false then missingInfo = missingInfo + 1 end
-            local qty = tonumber(count) or 0
-            local buyoutCopper = tonumber(buyout) or 0
-            rows[#rows + 1] = {
-                index = index,
-                item_id = tonumber(itemId),
-                item_name = name,
-                quantity = qty,
-                buyout_copper = buyoutCopper,
-                unit_buyout_copper = (qty > 0 and buyoutCopper > 0) and math.floor(buyoutCopper / qty) or nil,
-                min_bid_copper = tonumber(minBid),
-                min_increment_copper = tonumber(minIncrement),
-                current_bid_copper = tonumber(currentBid),
-                seller_character = seller,
-                seller_missing = seller == nil,
-                has_all_info = hasAllInfo == true,
-            }
+            -- The legacy list-update event has no request ID. Fail closed if
+            -- another AH search replaced our requested item's result list.
+            if name ~= request.query
+                or (request.item_id and tonumber(itemId) ~= request.item_id) then
+                mismatchedItem = true
+                invalid = invalid + 1
+            else
+                local seller = copyString(ownerFullName) or copyString(owner)
+                if not seller then missingOwner = missingOwner + 1 end
+                if hasAllInfo == false then missingInfo = missingInfo + 1 end
+                local qty = tonumber(count) or 0
+                local buyoutCopper = tonumber(buyout) or 0
+                local timeLeftBucket
+                if timeLeftAPIAvailable then
+                    local timeLeftOk, value = pcall(getTimeLeft, "list", index)
+                    value = timeLeftOk and tonumber(value) or nil
+                    if value and value >= 1 and value <= 4 and value == math.floor(value) then
+                        timeLeftBucket = value
+                    else
+                        missingTimeLeft = missingTimeLeft + 1
+                    end
+                else
+                    missingTimeLeft = missingTimeLeft + 1
+                end
+                rows[#rows + 1] = {
+                    index = index,
+                    item_id = tonumber(itemId),
+                    item_name = name,
+                    quantity = qty,
+                    buyout_copper = buyoutCopper,
+                    unit_buyout_copper = (qty > 0 and buyoutCopper > 0) and math.floor(buyoutCopper / qty) or nil,
+                    min_bid_copper = tonumber(minBid),
+                    min_increment_copper = tonumber(minIncrement),
+                    current_bid_copper = tonumber(currentBid),
+                    seller_character = seller,
+                    seller_missing = seller == nil,
+                    has_all_info = hasAllInfo == true,
+                    time_left_bucket = timeLeftBucket,
+                }
+            end
         else
             invalid = invalid + 1
         end
     end
+    if mismatchedItem then
+        pending = nil
+        setStatus("error", "AH 当前列表与请求物品不一致；本次未保存")
+        say("AH 结果列表中的物品与本次查询不一致，本次未保存；请关闭其他搜索后重试。")
+        return
+    end
+    if #rows == 0 then
+        pending = nil
+        setStatus("error", "未能读取有效挂单；本次未保存")
+        say("列表有挂单但插件未能读取有效数据；本次未保存。")
+        return
+    end
+    if missingOwner > 0 and not forcePartialOwnerCapture then
+        if C_Timer and type(C_Timer.After) == "function" then
+            if not request.ownerResolutionFallbackScheduled then
+                request.ownerResolutionFallbackScheduled = true
+                setStatus("resolving", "等待客户端解析卖家名称；不重发 AH 查询")
+                say("部分卖家名称尚未解析，等待最多 " .. SELLER_RESOLUTION_WAIT_SECONDS
+                    .. " 秒；不会再次查询 AH。")
+                C_Timer.After(SELLER_RESOLUTION_WAIT_SECONDS, function()
+                    if pending == request then collect(true) end
+                end)
+            end
+            return
+        end
+    end
+    pending = nil
     local end_ms = (GetTime and GetTime() or 0) * 1000
     local scan = {
         schema_version = 1,
@@ -175,11 +253,15 @@ local function collect()
         observed_at = now(),
         started_at = request.started_at,
         realm = getRealm(), faction = faction(), client_build = clientBuild(),
-        query = request.query, page = request.page,
+        query = request.query, requested_item_id = request.item_id, page = request.page,
         reported_page_count = num, reported_total = tonumber(total),
         coverage = "single_page",
-        complete = invalid == 0 and missingInfo == 0 and #rows == num,
+        complete = invalid == 0 and missingOwner == 0 and missingInfo == 0 and #rows == num,
         invalid_rows = invalid, missing_owner_rows = missingOwner, missing_info_rows = missingInfo,
+        time_left_api_available = timeLeftAPIAvailable,
+        missing_time_left_rows = missingTimeLeft,
+        time_left_complete = missingTimeLeft == 0,
+        seller_resolution_timed_out = forcePartialOwnerCapture == true and missingOwner > 0,
         duration_ms = math.max(0, math.floor(end_ms - request.start_ms)),
         rows = rows,
     }
@@ -190,13 +272,12 @@ local function collect()
     end
     session.newPages = session.newPages + 1
     session.lastResult = scan
-    if #rows > 0 then
-        setStatus("captured", "已采集 " .. tostring(#rows) .. " 条挂单（内存，待写盘）")
-    else
-        setStatus("empty_result", "当前查询返回 0 条；空页已记录（不等于全服无货）")
-    end
+    local partialSellerNote = missingOwner > 0
+        and ("；卖家名仍缺 " .. tostring(missingOwner) .. " 条，已标记为部分数据") or ""
+    setStatus("captured", "已采集 " .. tostring(#rows) .. " 条挂单（内存，待写盘）" .. partialSellerNote)
     say("保存 " .. tostring(#rows) .. "/" .. tostring(num)
         .. " 行，总结果 " .. tostring(total or "?") .. "；卖家缺失 " .. tostring(missingOwner)
+        .. (scan.seller_resolution_timed_out and "（等待后仍未解析）" or "")
         .. "；仅本页，需 /reload 或正常登出落盘。")
 end
 
@@ -219,10 +300,30 @@ function API.GetState()
         clientBuild = clientBuild(),
         legacyAPIAvailable = supported(),
         modernAPIAvailable = type(C_AuctionHouse) == "table",
+        timeLeftAPIAvailable = type(GetAuctionItemTimeLeft) == "function",
     }
 end
 
-API.ScanLotus = function() beginPage(LOTUS, 0) end
+function API.GetWatchlist()
+    local copy = {}
+    for i, item in ipairs(WATCHLIST) do
+        copy[i] = {name = item.name, item_id = item.item_id}
+    end
+    return copy
+end
+
+function API.ScanWatchlistItem(index)
+    index = tonumber(index)
+    if not index or index ~= math.floor(index) or not WATCHLIST[index] then
+        setStatus("error", "物品清单序号无效")
+        say("物品清单序号无效；输入 /ac items 查看清单。")
+        return
+    end
+    local item = WATCHLIST[index]
+    beginPage(item.name, 0, item.item_id)
+end
+
+API.ScanLotus = function() API.ScanWatchlistItem(1) end
 API.ScanNext = function()
     if not lastQuery then
         setStatus("error", "请先扫描第一页，再手动选择下一页")
@@ -233,10 +334,11 @@ API.ScanNext = function()
     local last = AuctionCollectorDB.scans[#AuctionCollectorDB.scans]
     local nextPage = 0
     if last and last.query == lastQuery then nextPage = (last.page or 0) + 1 end
-    beginPage(lastQuery, nextPage)
+    beginPage(lastQuery, nextPage, lastQueryItemId)
 end
 API.Probe = function()
     say("Legacy API " .. tostring(supported())
+        .. " / Auction item time-left API " .. tostring(type(GetAuctionItemTimeLeft) == "function")
         .. " / C_AuctionHouse " .. tostring(type(C_AuctionHouse) == "table")
         .. " / Realm " .. tostring(getRealm())
         .. " / Faction " .. tostring(faction()) .. " / Build " .. tostring(clientBuild()))
@@ -264,8 +366,22 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         if type(API.ShowPanel) == "function" then API.ShowPanel() end
         return
     end
-    if command == "lotus" or command == "scan" then
+    if command == "items" then
+        for i, item in ipairs(WATCHLIST) do
+            say(tostring(i) .. ". " .. item.name)
+        end
+        return
+    end
+    if command == "lotus" then
         API.ScanLotus()
+        return
+    end
+    if command == "scan" then
+        if argument == "" then
+            API.ScanLotus()
+        else
+            API.ScanWatchlistItem(argument)
+        end
         return
     end
     if command == "next" then
@@ -277,7 +393,8 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         if not page or page ~= math.floor(page) or page < 1 then
             say("用法：/ac page 1 （页码从 1 开始）")
         else
-            beginPage(lastQuery or LOTUS, page - 1)
+            beginPage(lastQuery or WATCHLIST[1].name, page - 1,
+                lastQueryItemId or WATCHLIST[1].item_id)
         end
         return
     end
@@ -285,7 +402,7 @@ SlashCmdList.AUCTIONCOLLECTOR = function(msg)
         say("为避免误删研究数据，暂不提供游戏内清空功能，请先导出并自行清理 SavedVariables。")
         return
     end
-    say("命令：/ac 打开面板、/ac probe、/ac lotus、/ac next、/ac page N、/ac status")
+    say("命令：/ac 打开面板、/ac items、/ac scan 序号、/ac lotus、/ac next、/ac page N、/ac status")
 end
 
 AC:RegisterEvent("ADDON_LOADED")
