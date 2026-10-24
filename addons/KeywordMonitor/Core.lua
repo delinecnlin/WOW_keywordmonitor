@@ -9,7 +9,23 @@ local DEFAULT_RULE = {
     name = "示例：玛拉顿找T",
     expression = "(MLD OR 玛拉顿 OR 玛拉) AND (T OR MT OR 坦 OR 坦克) AND NOT (带 OR 老板 OR 工作室)",
     enabled = true,
+    channels = { public = true, guild = false },
 }
+
+-- Older SavedVariables entries predate channel selection. They remain public-only.
+local function normalizeChannels(channels)
+    if type(channels) ~= "table" then
+        return { public = true, guild = false }
+    end
+    return {
+        public = channels.public ~= false,
+        guild = channels.guild == true,
+    }
+end
+
+local function hasChannel(channels)
+    return channels.public or channels.guild
+end
 
 local function copyDefaults(target, defaults)
     for key, value in pairs(defaults) do
@@ -214,7 +230,7 @@ function WKM:SortRulesByEnabled()
     self.DB.rules = sorted
 end
 
-function WKM:AddRule(name, expression)
+function WKM:AddRule(name, expression, channels)
     name = (name or ""):match("^%s*(.-)%s*$")
     expression = (expression or ""):match("^%s*(.-)%s*$")
     if name == "" then return false, "规则名称不能为空" end
@@ -222,11 +238,17 @@ function WKM:AddRule(name, expression)
     local valid, err = self.Rules.Validate(expression)
     if not valid then return false, err end
 
+    local selectedChannels = normalizeChannels(channels)
+    if not hasChannel(selectedChannels) then
+        return false, "至少选择一个监听频道"
+    end
+
     local rule = {
         id = self.DB.nextRuleId,
         name = name,
         expression = expression,
         enabled = true,
+        channels = selectedChannels,
     }
     self.DB.nextRuleId = self.DB.nextRuleId + 1
     table.insert(self.DB.rules, 1, rule)
@@ -235,9 +257,17 @@ function WKM:AddRule(name, expression)
     return true, rule
 end
 
-function WKM:UpdateRule(id, name, expression, enabled)
+function WKM:UpdateRule(id, name, expression, enabled, channels)
     local rule = self:FindRule(id)
     if not rule then return false, "规则不存在" end
+
+    local selectedChannels
+    if channels ~= nil then
+        selectedChannels = normalizeChannels(channels)
+        if not hasChannel(selectedChannels) then
+            return false, "至少选择一个监听频道"
+        end
+    end
 
     if expression ~= nil then
         expression = (expression or ""):match("^%s*(.-)%s*$")
@@ -252,6 +282,7 @@ function WKM:UpdateRule(id, name, expression, enabled)
         rule.name = name
     end
 
+    if selectedChannels then rule.channels = selectedChannels end
     if enabled ~= nil then
         rule.enabled = enabled and true or false
         self:SortRulesByEnabled()
@@ -270,10 +301,12 @@ function WKM:DeleteRule(id)
     return true
 end
 
-function WKM:MatchText(message)
+function WKM:MatchText(message, channelType)
+    channelType = channelType or "public"
     local matchedRules, matchedTerms = {}, {}
     for _, rule in ipairs(self.DB.rules) do
-        if rule.enabled then
+        local channels = normalizeChannels(rule.channels)
+        if rule.enabled and channels[channelType] == true then
             local matched, terms, err = self.Rules.Match(rule, message)
             if matched then
                 matchedRules[#matchedRules + 1] = rule
@@ -287,13 +320,14 @@ function WKM:MatchText(message)
     return matchedRules, matchedTerms
 end
 
-function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, guid)
+function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, guid, channelType)
     if not self.DB.enabled or not message or message == "" then return end
     if shortName(sender) == UnitName("player") then return end
 
     self:PruneExpiredHistory()
 
-    local matchedRules, terms = self:MatchText(message)
+    channelType = channelType or "public"
+    local matchedRules, terms = self:MatchText(message, channelType)
     if #matchedRules == 0 then return end
 
     local ruleNames, ruleIds = {}, {}
@@ -303,7 +337,7 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
     end
 
     local now = time()
-    local key = tostring(sender) .. "|" .. tostring(message) .. "|" .. table.concat(ruleIds, ",")
+    local key = channelType .. "|" .. tostring(sender) .. "|" .. tostring(message) .. "|" .. table.concat(ruleIds, ",")
     local last = recentMessages[key]
     if last and now - last < self.DB.settings.dedupeSeconds then return end
     recentMessages[key] = now
@@ -323,6 +357,7 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
         className = className,
         message = message,
         channel = channelName or "?",
+        channelType = channelType,
         channelIndex = channelIndex,
         lineID = lineID,
         ruleNames = ruleNames,
@@ -433,11 +468,16 @@ local function initializeDB()
             name = DEFAULT_RULE.name,
             expression = DEFAULT_RULE.expression,
             enabled = DEFAULT_RULE.enabled,
+            channels = normalizeChannels(DEFAULT_RULE.channels),
         }
         WKM.DB.nextRuleId = WKM.DB.nextRuleId + 1
         table.insert(WKM.DB.rules, rule)
     end
 
+    -- Migrate existing rules without changing their prior public-channel behavior.
+    for _, rule in ipairs(WKM.DB.rules) do
+        rule.channels = normalizeChannels(rule.channels)
+    end
     WKM:SortRulesByEnabled()
 
     while #WKM.DB.history > WKM.DB.settings.maxHistory do
@@ -491,6 +531,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 
         initializeDB()
         eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
+        eventFrame:RegisterEvent("CHAT_MSG_GUILD")
         eventFrame:RegisterEvent("IGNORELIST_UPDATE")
         if WKM.CreateMainWindow then WKM:CreateMainWindow() end
         if WKM.CreateMinimapButton then WKM:CreateMinimapButton() end
@@ -511,6 +552,12 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         local message, sender, _, channelName, _, _, _, channelIndex, channelBaseName, _, lineID, guid = ...
         local displayChannel = channelBaseName
         if not displayChannel or displayChannel == "" then displayChannel = channelName end
-        WKM:ProcessChat(message, sender, displayChannel, channelIndex, lineID, guid)
+        WKM:ProcessChat(message, sender, displayChannel, channelIndex, lineID, guid, "public")
+        return
+    end
+
+    if event == "CHAT_MSG_GUILD" then
+        local message, sender, _, _, _, _, _, _, _, _, lineID, guid = ...
+        WKM:ProcessChat(message, sender, "公会", nil, lineID, guid, "guild")
     end
 end)
