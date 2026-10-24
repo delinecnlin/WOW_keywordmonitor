@@ -73,6 +73,20 @@ setStatus = function(panel, text, color)
     panel.status:SetText("|c" .. color .. tostring(text or "") .. "|r")
 end
 
+local function editorChannels(panel)
+    return {
+        public = panel.publicCheck:GetChecked() and true or false,
+        guild = panel.guildCheck:GetChecked() and true or false,
+    }
+end
+
+local function channelsLabel(rule)
+    local ch = rule.channels or { public = true, guild = false }
+    if ch.public ~= false and ch.guild == true then return "公共/公会" end
+    if ch.guild == true then return "公会" end
+    return "公共"
+end
+
 local function markDirty(panel)
     if panel.loadingEditor then return end
     if panel.selectedId then
@@ -92,6 +106,8 @@ function WKM:BeginNewRule()
     panel.originalExpression = ""
     panel.nameEdit:SetText("")
     panel.exprEdit:SetText("")
+    panel.publicCheck:SetChecked(true)
+    panel.guildCheck:SetChecked(false)
     panel.save:SetText("保存新规则")
     panel.mode:SetText("当前：新建规则")
     panel.loadingEditor = false
@@ -113,6 +129,9 @@ function WKM:LoadRuleIntoEditor(rule)
     panel.originalExpression = rule.expression or ""
     panel.nameEdit:SetText(panel.originalName)
     panel.exprEdit:SetText(panel.originalExpression)
+    local channels = rule.channels or { public = true, guild = false }
+    panel.publicCheck:SetChecked(channels.public ~= false)
+    panel.guildCheck:SetChecked(channels.guild == true)
     panel.save:SetText("确认修改")
     panel.mode:SetText("当前：编辑「" .. (rule.name or "") .. "」")
     panel.loadingEditor = false
@@ -152,9 +171,13 @@ function WKM:CommitPendingRuleUpdate()
         name = rule.name,
         expression = rule.expression,
         enabled = rule.enabled,
+        channels = {
+            public = not rule.channels or rule.channels.public ~= false,
+            guild = rule.channels and rule.channels.guild == true or false,
+        },
     }
 
-    local ok, result = self:UpdateRule(pending.id, pending.name, pending.expression, nil)
+    local ok, result = self:UpdateRule(pending.id, pending.name, pending.expression, nil, pending.channels)
     if not ok then
         setStatus(self.mainFrame.rulesPanel, tostring(result), "ffff5555")
         return
@@ -180,7 +203,7 @@ function WKM:UndoLastRuleUpdate()
         return
     end
 
-    local ok, result = self:UpdateRule(backup.id, backup.name, backup.expression, backup.enabled)
+    local ok, result = self:UpdateRule(backup.id, backup.name, backup.expression, backup.enabled, backup.channels)
     if not ok then
         setStatus(panel, tostring(result), "ffff5555")
         return
@@ -195,6 +218,12 @@ function WKM:SaveRuleEditor()
     local panel = self.mainFrame.rulesPanel
     local name = trim(panel.nameEdit:GetText())
     local expression = trim(panel.exprEdit:GetText())
+    local channels = editorChannels(panel)
+
+    if not channels.public and not channels.guild then
+        setStatus(panel, "至少选择一个监听频道", "ffff5555")
+        return
+    end
 
     if name == "" then
         setStatus(panel, "规则名称不能为空", "ffff5555")
@@ -208,7 +237,7 @@ function WKM:SaveRuleEditor()
     end
 
     if not panel.selectedId then
-        local ok, result = self:AddRule(name, expression)
+        local ok, result = self:AddRule(name, expression, channels)
         if not ok then
             setStatus(panel, tostring(result), "ffff5555")
             return
@@ -226,7 +255,10 @@ function WKM:SaveRuleEditor()
         return
     end
 
-    if current.name == name and current.expression == expression then
+    local currentChannels = current.channels or { public = true, guild = false }
+    if current.name == name and current.expression == expression
+        and (currentChannels.public ~= false) == channels.public
+        and (currentChannels.guild == true) == channels.guild then
         setStatus(panel, "没有需要保存的修改", "ffffcc55")
         return
     end
@@ -235,6 +267,7 @@ function WKM:SaveRuleEditor()
         id = panel.selectedId,
         name = name,
         expression = expression,
+        channels = channels,
     }
 
     StaticPopup_Show("WKM_CONFIRM_RULE_UPDATE", current.name)
@@ -338,9 +371,15 @@ function WKM:CreateRuleRow(panel, index)
 
     row.expr = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.expr:SetPoint("LEFT", 240, 0)
-    row.expr:SetWidth(493)
+    row.expr:SetWidth(395)
     row.expr:SetJustifyH("LEFT")
     row.expr:SetWordWrap(false)
+
+    row.scope = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.scope:SetPoint("LEFT", 642, 0)
+    row.scope:SetWidth(102)
+    row.scope:SetJustifyH("LEFT")
+    row.scope:SetWordWrap(false)
 
     row.del = self:CreateButton(row, "删除", 58, 22)
     row.del:SetPoint("RIGHT", -4, 0)
@@ -404,13 +443,37 @@ function WKM:CreateRulesPanel(panel)
 
     local help = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     help:SetPoint("TOPLEFT", 8, -110)
-    help:SetWidth(800)
+    help:SetWidth(418)
     help:SetJustifyH("LEFT")
-    help:SetText("支持 AND / OR / NOT / 括号；空格默认 AND。滚轮可翻页；规则框获得焦点后可 Shift+点击任务/物品链接。")
+    help:SetText("AND / OR / NOT；空格默认 AND；Shift+点击插入链接")
+
+    local channelLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    channelLabel:SetPoint("TOPLEFT", 446, -112)
+    channelLabel:SetText("监听：")
+
+    panel.publicCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    panel.publicCheck:SetSize(22, 22)
+    panel.publicCheck:SetPoint("TOPLEFT", 494, -106)
+    panel.publicCheck:SetScript("OnClick", function() markDirty(panel) end)
+    local publicText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    publicText:SetPoint("LEFT", panel.publicCheck, "RIGHT", 0, 0)
+    publicText:SetText("公共频道")
+
+    panel.guildCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    panel.guildCheck:SetSize(22, 22)
+    panel.guildCheck:SetPoint("TOPLEFT", 615, -106)
+    panel.guildCheck:SetScript("OnClick", function() markDirty(panel) end)
+    local guildText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    guildText:SetPoint("LEFT", panel.guildCheck, "RIGHT", 0, 0)
+    guildText:SetText("公会频道")
 
     local header = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     header:SetPoint("TOPLEFT", 8, -134)
     header:SetText("状态        名称                       表达式")
+
+    local scopeHeader = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    scopeHeader:SetPoint("TOPLEFT", 646, -134)
+    scopeHeader:SetText("监听频道")
 
     for i = 1, RULES_PER_PAGE do
         self:CreateRuleRow(panel, i)
@@ -458,6 +521,7 @@ function WKM:RefreshRulesUI(reset)
             row.name.ruleId = rule.id
             row.name:SetText(rule.name)
             row.expr:SetText(rule.expression)
+            row.scope:SetText(channelsLabel(rule))
             row.del.ruleId = rule.id
         else
             row:Hide()
