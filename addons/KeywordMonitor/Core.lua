@@ -505,21 +505,24 @@ local function handleSlash(input)
     elseif cmd == "clear" then
         WKM:ClearHistory()
         WKM:Print("匹配历史已清空")
-    elseif cmd == "test" then
+    elseif cmd == "test" or cmd == "testguild" then
+        local isGuild = cmd == "testguild"
         if rest == "" then
-            WKM:Print("用法：/wkm test 要测试的聊天文本")
+            WKM:Print(isGuild and "用法：/wkm testguild 要测试的公会消息" or "用法：/wkm test 要测试的公共频道消息")
             return
         end
-        local rules = WKM:MatchText(rest)
+        local channelType = isGuild and "guild" or "public"
+        local rules = WKM:MatchText(rest, channelType)
+        local channelLabel = isGuild and "公会" or "公共"
         if #rules == 0 then
-            WKM:Print("测试结果：没有规则匹配")
+            WKM:Print(channelLabel .. "频道测试：没有规则匹配")
         else
             local names = {}
             for _, rule in ipairs(rules) do names[#names + 1] = rule.name end
-            WKM:Print("测试结果：匹配 " .. table.concat(names, "、"))
+            WKM:Print(channelLabel .. "频道测试：匹配 " .. table.concat(names, "、"))
         end
     else
-        WKM:Print("/wkm - 打开窗口；/wkm test 文本；/wkm on；/wkm off；/wkm clear")
+        WKM:Print("/wkm - 打开窗口；/wkm test 文本；/wkm testguild 文本；/wkm on；/wkm off；/wkm clear")
     end
 end
 
