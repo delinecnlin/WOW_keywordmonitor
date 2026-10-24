@@ -152,8 +152,8 @@ function WKM:ShowFriendNoteEditor(name)
             local friendName = dialog.playerName
             if not friendName or friendName == "" then return end
             local note = dialog.note:GetText() or ""
-            local existingInfo = api.GetFriendInfo(friendName)
-            local alreadyFriend = existingInfo ~= nil
+            local queryOK, existingInfo = pcall(api.GetFriendInfo, friendName)
+            local alreadyFriend = queryOK and existingInfo ~= nil
             if not alreadyFriend and api.IsFriend then
                 local ok, isFriend = pcall(api.IsFriend, friendName)
                 if ok and isFriend then alreadyFriend = true end
@@ -206,6 +206,7 @@ function WKM:ShowFriendNoteEditor(name)
     dialog.heading:SetText((alreadyFriend and "编辑好友备注：" or "添加角色好友：") .. name)
     dialog.confirm:SetText(alreadyFriend and "保存备注" or "添加好友")
     dialog.note:SetText(info and info.notes or "")
+    if self.DismissHistoryPreview then self:DismissHistoryPreview() end
     dialog:Show()
     dialog.note:SetFocus()
     dialog.note:HighlightText()
@@ -413,6 +414,14 @@ function WKM:CreateHistoryPanel(panel)
     panel.hoverCheck = 0
     panel.hoveredRow = nil
     panel:SetScript("OnUpdate", function(self, elapsed)
+        if WKM.friendNoteFrame and WKM.friendNoteFrame:IsShown() then
+            if self.hoveredRow then
+                self.hoveredRow = nil
+                self.hoveredEntry = nil
+                WKM:HideHistoryEntryTooltip()
+            end
+            return
+        end
         if not self:IsShown() then
             if self.hoveredRow then
                 self.hoveredRow = nil
