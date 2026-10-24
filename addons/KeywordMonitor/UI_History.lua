@@ -112,6 +112,105 @@ local function isPointerOverRow(row)
     return x >= left and x <= right and y >= bottom and y <= top
 end
 
+-- A character friend is a WoW FriendList entry, not a Battle.net friend.
+-- Native notes are limited to 48 characters by the game.
+function WKM:ShowFriendNoteEditor(name)
+    if not name or name == "" then return end
+
+    local api = C_FriendList
+    if not api or not api.AddFriend or not api.GetFriendInfo then
+        self:Print("当前客户端不支持角色好友备注接口")
+        return
+    end
+
+    if not self.friendNoteFrame then
+        local tpl = BackdropTemplateMixin and "BackdropTemplate" or nil
+        local dialog = CreateFrame("Frame", "WKM_FriendNoteFrame", self.mainFrame, tpl)
+        dialog:SetSize(440, 155)
+        dialog:SetPoint("CENTER", self.mainFrame, "CENTER")
+        dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+        dialog:EnableMouse(true)
+        dialog:SetClampedToScreen(true)
+        self:StylePanel(dialog)
+
+        dialog.heading = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        dialog.heading:SetPoint("TOPLEFT", 20, -18)
+        dialog.heading:SetPoint("RIGHT", -35, 0)
+        dialog.heading:SetJustifyH("LEFT")
+
+        local hint = dialog:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        hint:SetPoint("TOPLEFT", 20, -45)
+        hint:SetText("WoW 角色好友备注（非战网好友，最多 48 字）")
+
+        dialog.note = self:CreateEditBox(dialog, 380, 26)
+        dialog.note:SetPoint("TOP", 0, -76)
+        dialog.note:SetMaxLetters(48)
+
+        dialog.confirm = self:CreateButton(dialog, "添加好友", 104, 24)
+        dialog.confirm:SetPoint("BOTTOMRIGHT", -128, 16)
+        dialog.confirm:SetScript("OnClick", function()
+            local friendName = dialog.playerName
+            if not friendName or friendName == "" then return end
+            local note = dialog.note:GetText() or ""
+            local existingInfo = api.GetFriendInfo(friendName)
+            local alreadyFriend = existingInfo ~= nil
+            if not alreadyFriend and api.IsFriend then
+                local ok, isFriend = pcall(api.IsFriend, friendName)
+                if ok and isFriend then alreadyFriend = true end
+            end
+
+            if alreadyFriend then
+                if not api.SetFriendNotes then
+                    WKM:Print("当前客户端不支持修改好友备注")
+                    return
+                end
+                local ok, result = pcall(api.SetFriendNotes, friendName, note)
+                if not ok or result == false then
+                    WKM:Print("修改好友备注失败：" .. tostring(result))
+                    return
+                end
+                WKM:Print("已修改角色好友备注：" .. friendName)
+            else
+                -- Keep this call in the actual button click; AddFriend is restricted
+                -- when invoked through /run and other non-hardware contexts.
+                local ok, err = pcall(api.AddFriend, friendName, note)
+                if not ok then
+                    WKM:Print("添加角色好友失败：" .. tostring(err))
+                    return
+                end
+                WKM:Print("已向 WoW 提交角色好友添加操作：" .. friendName)
+            end
+            dialog:Hide()
+        end)
+
+        local cancel = self:CreateButton(dialog, "取消", 90, 24)
+        cancel:SetPoint("LEFT", dialog.confirm, "RIGHT", 8, 0)
+        cancel:SetScript("OnClick", function() dialog:Hide() end)
+
+        local close = CreateFrame("Button", nil, dialog, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", -3, -3)
+        dialog:Hide()
+        self.friendNoteFrame = dialog
+    end
+
+    local dialog = self.friendNoteFrame
+    dialog.playerName = name
+    local ok, info = pcall(api.GetFriendInfo, name)
+    info = ok and info or nil
+    local alreadyFriend = info ~= nil
+    if not alreadyFriend and api.IsFriend then
+        local friendOK, result = pcall(api.IsFriend, name)
+        if friendOK and result then alreadyFriend = true end
+    end
+
+    dialog.heading:SetText((alreadyFriend and "编辑好友备注：" or "添加角色好友：") .. name)
+    dialog.confirm:SetText(alreadyFriend and "保存备注" or "添加好友")
+    dialog.note:SetText(info and info.notes or "")
+    dialog:Show()
+    dialog.note:SetFocus()
+    dialog.note:HighlightText()
+end
+
 function WKM:ShowCopyName(name)
     if not self.copyFrame then
         local tpl = BackdropTemplateMixin and "BackdropTemplate" or nil
@@ -255,9 +354,15 @@ function WKM:CreateHistoryPanel(panel)
 
         row.msg = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.msg:SetPoint("LEFT", 423, 0)
-        row.msg:SetWidth(250)
+        row.msg:SetWidth(210)
         row.msg:SetJustifyH("LEFT")
         row.msg:SetWordWrap(false)
+
+        row.friend = WKM:CreateButton(row, "友", 28, 22)
+        row.friend:SetPoint("RIGHT", -132, 0)
+        row.friend:SetScript("OnClick", function(self)
+            if self.player then WKM:ShowFriendNoteEditor(self.player) end
+        end)
 
         row.blacklist = WKM:CreateButton(row, "黑", 28, 22)
         row.blacklist:SetPoint("RIGHT", -100, 0)
@@ -386,6 +491,7 @@ function WKM:RefreshHistoryUI(reset)
             row.channel:SetText(e.channel or "?")
             row.msg:SetText(self.Rules.Highlight(e.message, e.matchedTerms))
 
+            row.friend.player = e.sender
             row.blacklist.player = e.sender
             row.blacklist.entry = e
             row.pm.player = e.sender
@@ -397,6 +503,7 @@ function WKM:RefreshHistoryUI(reset)
         else
             row.entry = nil
             row.sender.entry = nil
+            row.friend.player = nil
             row.blacklist.player = nil
             row.blacklist.entry = nil
             row.pm.entry = nil
