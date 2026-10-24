@@ -99,6 +99,7 @@ end
 function WKM:ShowTab(tabName)
     if not self.mainFrame then return end
     if self.DismissHistoryPreview then self:DismissHistoryPreview() end
+    if self.friendNoteFrame then self.friendNoteFrame:Hide() end
 
     local showHistory = tabName == "history"
     local showBlacklist = tabName == "blacklist"
@@ -249,8 +250,9 @@ function WKM:CreateMainWindow()
         WKM:ShowTab("history")
     end)
     frame:SetScript("OnHide", function()
-        -- The preview used to be orphaned on UIParent when closing via ESC.
+        -- Close both transient UI surfaces even when dismissed via ESC.
         if WKM.DismissHistoryPreview then WKM:DismissHistoryPreview() end
+        if WKM.friendNoteFrame then WKM.friendNoteFrame:Hide() end
     end)
 
     self:UpdateGlobalState()
