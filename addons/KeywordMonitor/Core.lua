@@ -583,6 +583,10 @@ local function handleSlash(input)
 
     if cmd == "" then
         WKM:ToggleMainWindow()
+    elseif cmd == "help" or cmd == "?" then
+        WKM:Print("/wkm 关键词（快速临时监听公共频道）；/wkm tg 关键词（公会）")
+        WKM:Print("/wkm tl（列表）；/wkm tr 关键词（删除）；/wkm tc（清空）；/wkm t 关键词（兼容旧写法）")
+        WKM:Print("/wkm（窗口）；/wkm test 文本；/wkm testguild 文本；/wkm on；/wkm off；/wkm clear")
     elseif cmd == "on" then
         WKM:SetEnabled(true)
         WKM:Print("监听已开启")
@@ -633,8 +637,16 @@ local function handleSlash(input)
             WKM:Print(channelLabel .. "频道测试：匹配 " .. table.concat(names, "、"))
         end
     else
-        WKM:Print("/wkm t 关键词（公共）；/wkm tg 关键词（公会）；/wkm tl（查看）；/wkm tr 关键词（删除）；/wkm tc（清空）")
-        WKM:Print("/wkm（窗口）；/wkm test 文本；/wkm testguild 文本；/wkm on；/wkm off；/wkm clear")
+        -- All other slash text is a literal temporary public-channel keyword.
+        -- Use the original input, not the lowercased command token, so phrases
+        -- such as "MC 开组" retain their spelling and internal spaces.
+        local keyword = (input or ""):match("^%s*(.-)%s*$")
+        local ok, err = WKM:AddTemporaryKeyword(keyword, "public")
+        if ok then
+            WKM:Print("已临时监测 [公共]：" .. keyword .. "（本次会话有效）")
+        else
+            WKM:Print(err)
+        end
     end
 end
 
