@@ -4,6 +4,10 @@ local WKM = WOWKeywordMonitor
 
 local eventFrame = CreateFrame("Frame")
 local recentMessages = {}
+-- Temporary keywords are intentionally runtime-only: /reload and logout clear them.
+local temporaryKeywords = {}
+local MAX_TEMP_KEYWORDS = 30
+local MAX_TEMP_KEYWORD_BYTES = 120
 
 local DEFAULT_RULE = {
     name = "示例：玛拉顿找T",
@@ -301,6 +305,78 @@ function WKM:DeleteRule(id)
     return true
 end
 
+local function trimTemporaryKeyword(value)
+    return tostring(value or ""):match("^%s*(.-)%s*$")
+end
+
+function WKM:AddTemporaryKeyword(text, channelType)
+    text = trimTemporaryKeyword(text)
+    channelType = channelType == "guild" and "guild" or "public"
+
+    if text == "" then return false, "关键词不能为空" end
+    if #text > MAX_TEMP_KEYWORD_BYTES then
+        return false, "临时关键词最长 " .. MAX_TEMP_KEYWORD_BYTES .. " 字节"
+    end
+    if text:find("[\r\n]") then
+        return false, "关键词不能包含换行"
+    end
+
+    local needle = text:lower()
+    for _, entry in ipairs(temporaryKeywords) do
+        if entry.channelType == channelType and entry.needle == needle then
+            return false, "该频道已在临时监测：" .. entry.text
+        end
+    end
+    if #temporaryKeywords >= MAX_TEMP_KEYWORDS then
+        return false, "临时监测已达 " .. MAX_TEMP_KEYWORDS .. " 条，请先删除不需要的关键词"
+    end
+
+    temporaryKeywords[#temporaryKeywords + 1] = {
+        text = text,
+        needle = needle,
+        channelType = channelType,
+        rule = {
+            id = "temp:" .. channelType .. ":" .. needle,
+            name = "临时：" .. text,
+            temporary = true,
+        },
+    }
+    return true
+end
+
+function WKM:RemoveTemporaryKeyword(text)
+    text = trimTemporaryKeyword(text)
+    if text == "" then return 0 end
+    local needle, removed = text:lower(), 0
+    for i = #temporaryKeywords, 1, -1 do
+        if temporaryKeywords[i].needle == needle then
+            table.remove(temporaryKeywords, i)
+            removed = removed + 1
+        end
+    end
+    return removed
+end
+
+function WKM:ClearTemporaryKeywords()
+    local removed = #temporaryKeywords
+    for i = #temporaryKeywords, 1, -1 do
+        temporaryKeywords[i] = nil
+    end
+    return removed
+end
+
+function WKM:ListTemporaryKeywords()
+    if #temporaryKeywords == 0 then
+        self:Print("暂无临时监测关键词")
+        return
+    end
+    self:Print("当前临时监测：" .. #temporaryKeywords .. " 条（/reload 后清空）")
+    for i, entry in ipairs(temporaryKeywords) do
+        local channelLabel = entry.channelType == "guild" and "公会" or "公共"
+        self:Print(i .. ". [" .. channelLabel .. "] " .. entry.text)
+    end
+end
+
 function WKM:MatchText(message, channelType)
     channelType = channelType or "public"
     local matchedRules, matchedTerms = {}, {}
@@ -317,6 +393,17 @@ function WKM:MatchText(message, channelType)
             end
         end
     end
+
+    -- Temporary terms are literal substrings, never parsed as boolean expressions.
+    -- Use the visible text for matching so a user may monitor names in item links.
+    local visibleText = self.Rules.Sanitize(message):lower()
+    for _, entry in ipairs(temporaryKeywords) do
+        if entry.channelType == channelType and visibleText:find(entry.needle, 1, true) then
+            matchedRules[#matchedRules + 1] = entry.rule
+            mergeUnique(matchedTerms, { entry.text })
+        end
+    end
+
     return matchedRules, matchedTerms
 end
 
@@ -505,6 +592,30 @@ local function handleSlash(input)
     elseif cmd == "clear" then
         WKM:ClearHistory()
         WKM:Print("匹配历史已清空")
+    elseif cmd == "t" or cmd == "temp" or cmd == "tg" then
+        if rest == "" then
+            WKM:Print(cmd == "tg" and "用法：/wkm tg 公会临时关键词" or "用法：/wkm t 公共频道临时关键词")
+            return
+        end
+        local channelType = cmd == "tg" and "guild" or "public"
+        local ok, err = WKM:AddTemporaryKeyword(rest, channelType)
+        if ok then
+            WKM:Print("已临时监测 [" .. (channelType == "guild" and "公会" or "公共") .. "]：" .. rest .. "（本次会话有效）")
+        else
+            WKM:Print(err)
+        end
+    elseif cmd == "tl" then
+        WKM:ListTemporaryKeywords()
+    elseif cmd == "tr" then
+        if rest == "" then
+            WKM:Print("用法：/wkm tr 要删除的临时关键词")
+            return
+        end
+        local removed = WKM:RemoveTemporaryKeyword(rest)
+        WKM:Print(removed > 0 and ("已移除临时关键词：" .. rest .. "（" .. removed .. " 条）") or ("没有找到临时关键词：" .. rest))
+    elseif cmd == "tc" then
+        local removed = WKM:ClearTemporaryKeywords()
+        WKM:Print("已清空 " .. removed .. " 条临时监测关键词（不会清除已记录的消息）")
     elseif cmd == "test" or cmd == "testguild" then
         local isGuild = cmd == "testguild"
         if rest == "" then
@@ -522,7 +633,8 @@ local function handleSlash(input)
             WKM:Print(channelLabel .. "频道测试：匹配 " .. table.concat(names, "、"))
         end
     else
-        WKM:Print("/wkm - 打开窗口；/wkm test 文本；/wkm testguild 文本；/wkm on；/wkm off；/wkm clear")
+        WKM:Print("/wkm t 关键词（公共）；/wkm tg 关键词（公会）；/wkm tl（查看）；/wkm tr 关键词（删除）；/wkm tc（清空）")
+        WKM:Print("/wkm（窗口）；/wkm test 文本；/wkm testguild 文本；/wkm on；/wkm off；/wkm clear")
     end
 end
 
