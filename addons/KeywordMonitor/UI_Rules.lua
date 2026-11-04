@@ -92,7 +92,63 @@ local function markDirty(panel)
     if panel.selectedId then
         setStatus(panel, "有未保存的修改", "ffffcc55")
     else
-        setStatus(panel, "新规则尚未保存", "ffffcc55")
+        setStatus(panel, "新规则尚未保存（需要点击保存新规则）", "ffffcc55")
+    end
+end
+
+-- Channel checkboxes apply immediately for an existing rule. The previous
+-- editor only marked the draft dirty, so switching rules discarded the selection.
+-- Keep unsaved name/expression text in the editor rather than reloading it.
+local function onChannelClick(panel, clickedCheck)
+    if panel.loadingEditor then return end
+
+    local channels = editorChannels(panel)
+    if not channels.public and not channels.guild then
+        clickedCheck:SetChecked(true)
+        setStatus(panel, "至少保留一个监听频道，已恢复勾选", "ffffcc55")
+        return
+    end
+
+    if not panel.selectedId then
+        setStatus(panel, "新规则的频道已选择，请点击保存新规则", "ffffcc55")
+        return
+    end
+
+    local rule = WKM:FindRule(panel.selectedId)
+    if not rule then
+        WKM:BeginNewRule()
+        setStatus(panel, "规则已不存在，请重新新建", "ffff5555")
+        return
+    end
+
+    local old = rule.channels or { public = true, guild = false }
+    local previous = {
+        public = old.public ~= false,
+        guild = old.guild == true,
+    }
+    if previous.public == channels.public and previous.guild == channels.guild then return end
+
+    local backup = {
+        id = rule.id,
+        name = rule.name,
+        expression = rule.expression,
+        enabled = rule.enabled,
+        channels = previous,
+    }
+    local ok, err = WKM:UpdateRule(rule.id, nil, nil, nil, channels)
+    if not ok then
+        panel.publicCheck:SetChecked(previous.public)
+        panel.guildCheck:SetChecked(previous.guild)
+        setStatus(panel, "频道保存失败：" .. tostring(err), "ffff5555")
+        return
+    end
+
+    WKM.DB.lastRuleUndo = backup
+    if trim(panel.nameEdit:GetText()) ~= (rule.name or "")
+        or trim(panel.exprEdit:GetText()) ~= (rule.expression or "") then
+        setStatus(panel, "频道已自动保存；名称或表达式的修改仍需确认保存", "ffffcc55")
+    else
+        setStatus(panel, "监听频道已自动保存并生效（可回退上次修改）", "ff66ff99")
     end
 end
 
@@ -111,7 +167,7 @@ function WKM:BeginNewRule()
     panel.save:SetText("保存新规则")
     panel.mode:SetText("当前：新建规则")
     panel.loadingEditor = false
-    setStatus(panel, "请输入名称和规则表达式", "ffbbbbbb")
+    setStatus(panel, "新建规则：填写名称和表达式，选择频道后点击保存新规则", "ffbbbbbb")
     panel.nameEdit:SetFocus()
 end
 
@@ -135,7 +191,7 @@ function WKM:LoadRuleIntoEditor(rule)
     panel.save:SetText("确认修改")
     panel.mode:SetText("当前：编辑「" .. (rule.name or "") .. "」")
     panel.loadingEditor = false
-    setStatus(panel, "修改后点击“确认修改”，会再次弹窗确认", "ffbbbbbb")
+    setStatus(panel, "频道勾选立即保存；名称和表达式修改需点击确认修改", "ffbbbbbb")
 end
 
 function WKM:CancelRuleEdit()
@@ -454,7 +510,7 @@ function WKM:CreateRulesPanel(panel)
     panel.publicCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
     panel.publicCheck:SetSize(22, 22)
     panel.publicCheck:SetPoint("TOPLEFT", 494, -106)
-    panel.publicCheck:SetScript("OnClick", function() markDirty(panel) end)
+    panel.publicCheck:SetScript("OnClick", function(self) onChannelClick(panel, self) end)
     local publicText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     publicText:SetPoint("LEFT", panel.publicCheck, "RIGHT", 0, 0)
     publicText:SetText("公共频道")
@@ -462,7 +518,7 @@ function WKM:CreateRulesPanel(panel)
     panel.guildCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
     panel.guildCheck:SetSize(22, 22)
     panel.guildCheck:SetPoint("TOPLEFT", 615, -106)
-    panel.guildCheck:SetScript("OnClick", function() markDirty(panel) end)
+    panel.guildCheck:SetScript("OnClick", function(self) onChannelClick(panel, self) end)
     local guildText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     guildText:SetPoint("LEFT", panel.guildCheck, "RIGHT", 0, 0)
     guildText:SetText("公会频道")
