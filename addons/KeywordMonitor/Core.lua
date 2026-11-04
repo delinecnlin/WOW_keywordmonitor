@@ -586,7 +586,7 @@ local function handleSlash(input)
     elseif cmd == "help" or cmd == "?" then
         WKM:Print("/wkm 关键词（快速临时监听公共频道）；/wkm tg 关键词（公会）")
         WKM:Print("/wkm tl（列表）；/wkm tr 关键词（删除）；/wkm tc（清空）；/wkm t 关键词（兼容旧写法）")
-        WKM:Print("/wkm（窗口）；/wkm test 文本；/wkm testguild 文本；/wkm on；/wkm off；/wkm clear")
+        WKM:Print("/wkm（窗口）；/wkm scopes（查看已保存的规则频道）；/wkm test 文本；/wkm testguild 文本；/wkm on；/wkm off；/wkm clear")
     elseif cmd == "on" then
         WKM:SetEnabled(true)
         WKM:Print("监听已开启")
@@ -596,6 +596,15 @@ local function handleSlash(input)
     elseif cmd == "clear" then
         WKM:ClearHistory()
         WKM:Print("匹配历史已清空")
+    elseif cmd == "scopes" then
+        -- Read the saved rule table directly, not the editor checkbox draft.
+        WKM:Print("已保存规则频道状态（每条规则的公会/公共选择）：")
+        for i, rule in ipairs(WKM.DB.rules) do
+            local ch = normalizeChannels(rule.channels)
+            local enabled = rule.enabled and "ON" or "OFF"
+            local scope = (ch.public and "公共" or "") .. (ch.public and ch.guild and "+" or "") .. (ch.guild and "公会" or "")
+            WKM:Print(string.format("#%d ID:%s [%s] [%s] %s", i, tostring(rule.id), enabled, scope, tostring(rule.name)))
+        end
     elseif cmd == "t" or cmd == "temp" or cmd == "tg" then
         if rest == "" then
             WKM:Print(cmd == "tg" and "用法：/wkm tg 公会临时关键词" or "用法：/wkm t 公共频道临时关键词")
