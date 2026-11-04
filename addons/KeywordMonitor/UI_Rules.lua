@@ -110,7 +110,7 @@ local function onChannelClick(panel, clickedCheck)
     end
 
     if not panel.selectedId then
-        setStatus(panel, "新规则的频道已选择，请点击保存新规则", "ffffcc55")
+        setStatus(panel, "当前是【新建规则】草稿；要修改已有规则，请点下方该规则的「公/会」开关", "ffffcc55")
         return
     end
 
@@ -165,7 +165,7 @@ function WKM:BeginNewRule()
     panel.publicCheck:SetChecked(true)
     panel.guildCheck:SetChecked(false)
     panel.save:SetText("保存新规则")
-    panel.mode:SetText("当前：新建规则")
+    panel.mode:SetText("当前：新建规则（未保存）")
     panel.loadingEditor = false
     setStatus(panel, "新建规则：填写名称和表达式，选择频道后点击保存新规则", "ffbbbbbb")
     panel.nameEdit:SetFocus()
@@ -189,7 +189,7 @@ function WKM:LoadRuleIntoEditor(rule)
     panel.publicCheck:SetChecked(channels.public ~= false)
     panel.guildCheck:SetChecked(channels.guild == true)
     panel.save:SetText("确认修改")
-    panel.mode:SetText("当前：编辑「" .. (rule.name or "") .. "」")
+    panel.mode:SetText("正在设置：「" .. (rule.name or "") .. "」")
     panel.loadingEditor = false
     setStatus(panel, "频道勾选立即保存；名称和表达式修改需点击确认修改", "ffbbbbbb")
 end
@@ -400,6 +400,47 @@ local function bindRuleWheel(widget)
     end)
 end
 
+-- Direct per-row channel controls avoid the editor's unsaved-new-rule state.
+-- Each click updates the SavedVariables-backed rule immediately.
+local function onRowChannelClick(panel, checkbox, channel)
+    local id = checkbox.ruleId
+    if not id then return end
+    local rule = WKM:FindRule(id)
+    if not rule then return end
+
+    local previous = {
+        public = not rule.channels or rule.channels.public ~= false,
+        guild = rule.channels and rule.channels.guild == true or false,
+    }
+    local channels = { public = previous.public, guild = previous.guild }
+    channels[channel] = checkbox:GetChecked() and true or false
+
+    if not channels.public and not channels.guild then
+        checkbox:SetChecked(true)
+        setStatus(panel, "至少需要监听一个频道；没有更改规则「" .. rule.name .. "」", "ffffcc55")
+        return
+    end
+    if channels.public == previous.public and channels.guild == previous.guild then return end
+
+    local backup = {
+        id = rule.id, name = rule.name, expression = rule.expression,
+        enabled = rule.enabled, channels = previous,
+    }
+    local ok, err = WKM:UpdateRule(id, nil, nil, nil, channels)
+    if not ok then
+        checkbox:SetChecked(previous[channel])
+        setStatus(panel, "保存频道失败：" .. tostring(err), "ffff5555")
+        return
+    end
+
+    WKM.DB.lastRuleUndo = backup
+    if panel.selectedId == id then
+        panel.publicCheck:SetChecked(channels.public)
+        panel.guildCheck:SetChecked(channels.guild)
+    end
+    setStatus(panel, "规则「" .. rule.name .. "」监听频道已保存：" .. channelsLabel(rule) .. "（可回退）", "ff66ff99")
+end
+
 function WKM:CreateRuleRow(panel, index)
     local row = CreateFrame("Frame", nil, panel)
     row:SetHeight(ROW_H)
@@ -431,11 +472,27 @@ function WKM:CreateRuleRow(panel, index)
     row.expr:SetJustifyH("LEFT")
     row.expr:SetWordWrap(false)
 
-    row.scope = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.scope:SetPoint("LEFT", 642, 0)
-    row.scope:SetWidth(102)
-    row.scope:SetJustifyH("LEFT")
-    row.scope:SetWordWrap(false)
+    row.publicCheck = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+    row.publicCheck:SetSize(20, 20)
+    row.publicCheck:SetPoint("LEFT", 640, 0)
+    row.publicCheck:SetScript("OnClick", function(self)
+        onRowChannelClick(panel, self, "public")
+    end)
+    bindRuleWheel(row.publicCheck)
+    local publicText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    publicText:SetPoint("LEFT", row.publicCheck, "RIGHT", 0, 0)
+    publicText:SetText("公")
+
+    row.guildCheck = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+    row.guildCheck:SetSize(20, 20)
+    row.guildCheck:SetPoint("LEFT", 686, 0)
+    row.guildCheck:SetScript("OnClick", function(self)
+        onRowChannelClick(panel, self, "guild")
+    end)
+    bindRuleWheel(row.guildCheck)
+    local guildText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    guildText:SetPoint("LEFT", row.guildCheck, "RIGHT", 0, 0)
+    guildText:SetText("会")
 
     row.del = self:CreateButton(row, "删除", 58, 22)
     row.del:SetPoint("RIGHT", -4, 0)
@@ -505,7 +562,7 @@ function WKM:CreateRulesPanel(panel)
 
     local channelLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     channelLabel:SetPoint("TOPLEFT", 446, -112)
-    channelLabel:SetText("监听：")
+    channelLabel:SetText("该规则：")
 
     panel.publicCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
     panel.publicCheck:SetSize(22, 22)
@@ -528,8 +585,8 @@ function WKM:CreateRulesPanel(panel)
     header:SetText("状态        名称                       表达式")
 
     local scopeHeader = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    scopeHeader:SetPoint("TOPLEFT", 646, -134)
-    scopeHeader:SetText("监听频道")
+    scopeHeader:SetPoint("TOPLEFT", 642, -134)
+    scopeHeader:SetText("监听：公 / 会")
 
     for i = 1, RULES_PER_PAGE do
         self:CreateRuleRow(panel, i)
@@ -550,7 +607,14 @@ function WKM:CreateRulesPanel(panel)
 
     bindRuleWheel(panel)
     self:InstallRuleLinkHook()
-    self:BeginNewRule()
+    -- The editor previously started in unsaved "new rule" mode. Users
+    -- checked Guild here expecting an existing rule to change, but it was
+    -- discarded on reopen. Select an existing rule by default instead.
+    if self.DB and self.DB.rules and self.DB.rules[1] then
+        self:LoadRuleIntoEditor(self.DB.rules[1])
+    else
+        self:BeginNewRule()
+    end
     self:RefreshRulesUI(true)
 end
 
@@ -577,12 +641,18 @@ function WKM:RefreshRulesUI(reset)
             row.name.ruleId = rule.id
             row.name:SetText(rule.name)
             row.expr:SetText(rule.expression)
-            row.scope:SetText(channelsLabel(rule))
+            row.publicCheck.ruleId = rule.id
+            row.guildCheck.ruleId = rule.id
+            local ch = rule.channels or { public = true, guild = false }
+            row.publicCheck:SetChecked(ch.public ~= false)
+            row.guildCheck:SetChecked(ch.guild == true)
             row.del.ruleId = rule.id
         else
             row:Hide()
             row.switch.ruleId = nil
             row.name.ruleId = nil
+            row.publicCheck.ruleId = nil
+            row.guildCheck.ruleId = nil
             row.del.ruleId = nil
         end
     end
