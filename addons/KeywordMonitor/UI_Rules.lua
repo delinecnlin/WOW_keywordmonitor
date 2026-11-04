@@ -75,8 +75,8 @@ end
 
 local function editorChannels(panel)
     return {
-        public = panel.publicCheck:GetChecked() and true or false,
-        guild = panel.guildCheck:GetChecked() and true or false,
+        public = panel.publicSwitch.value == true,
+        guild = panel.guildSwitch.value == true,
     }
 end
 
@@ -96,16 +96,15 @@ local function markDirty(panel)
     end
 end
 
--- Channel checkboxes apply immediately for an existing rule. The previous
--- editor only marked the draft dirty, so switching rules discarded the selection.
--- Keep unsaved name/expression text in the editor rather than reloading it.
-local function onChannelClick(panel, clickedCheck)
+-- Phone-style ON/OFF switches apply immediately to existing rules.
+-- New-rule drafts keep their selections until "保存新规则" is clicked.
+local function onChannelClick(panel, clickedSwitch)
     if panel.loadingEditor then return end
 
     local channels = editorChannels(panel)
     if not channels.public and not channels.guild then
-        clickedCheck:SetChecked(true)
-        setStatus(panel, "至少保留一个监听频道，已恢复勾选", "ffffcc55")
+        WKM:SetToggleState(clickedSwitch, true)
+        setStatus(panel, "至少保留一个监听频道，已恢复为 ON", "ffffcc55")
         return
     end
 
@@ -137,8 +136,8 @@ local function onChannelClick(panel, clickedCheck)
     }
     local ok, err = WKM:UpdateRule(rule.id, nil, nil, nil, channels)
     if not ok then
-        panel.publicCheck:SetChecked(previous.public)
-        panel.guildCheck:SetChecked(previous.guild)
+        WKM:SetToggleState(panel.publicSwitch, previous.public)
+        WKM:SetToggleState(panel.guildSwitch, previous.guild)
         setStatus(panel, "频道保存失败：" .. tostring(err), "ffff5555")
         return
     end
@@ -162,8 +161,8 @@ function WKM:BeginNewRule()
     panel.originalExpression = ""
     panel.nameEdit:SetText("")
     panel.exprEdit:SetText("")
-    panel.publicCheck:SetChecked(true)
-    panel.guildCheck:SetChecked(false)
+    self:SetToggleState(panel.publicSwitch, true)
+    self:SetToggleState(panel.guildSwitch, false)
     panel.save:SetText("保存新规则")
     panel.mode:SetText("当前：新建规则（未保存）")
     panel.loadingEditor = false
@@ -186,8 +185,8 @@ function WKM:LoadRuleIntoEditor(rule)
     panel.nameEdit:SetText(panel.originalName)
     panel.exprEdit:SetText(panel.originalExpression)
     local channels = rule.channels or { public = true, guild = false }
-    panel.publicCheck:SetChecked(channels.public ~= false)
-    panel.guildCheck:SetChecked(channels.guild == true)
+    self:SetToggleState(panel.publicSwitch, channels.public ~= false)
+    self:SetToggleState(panel.guildSwitch, channels.guild == true)
     panel.save:SetText("确认修改")
     panel.mode:SetText("正在设置：「" .. (rule.name or "") .. "」")
     panel.loadingEditor = false
@@ -400,10 +399,9 @@ local function bindRuleWheel(widget)
     end)
 end
 
--- Direct per-row channel controls avoid the editor's unsaved-new-rule state.
--- Each click updates the SavedVariables-backed rule immediately.
-local function onRowChannelClick(panel, checkbox, channel)
-    local id = checkbox.ruleId
+-- Direct per-row phone-style switches update the selected rule immediately.
+local function onRowChannelClick(panel, toggle, channel)
+    local id = toggle.ruleId
     if not id then return end
     local rule = WKM:FindRule(id)
     if not rule then return end
@@ -413,11 +411,11 @@ local function onRowChannelClick(panel, checkbox, channel)
         guild = rule.channels and rule.channels.guild == true or false,
     }
     local channels = { public = previous.public, guild = previous.guild }
-    channels[channel] = checkbox:GetChecked() and true or false
+    channels[channel] = toggle.value == true
 
     if not channels.public and not channels.guild then
-        checkbox:SetChecked(true)
-        setStatus(panel, "至少需要监听一个频道；没有更改规则「" .. rule.name .. "」", "ffffcc55")
+        WKM:SetToggleState(toggle, true)
+        setStatus(panel, "至少需要一个频道保持 ON；规则「" .. rule.name .. "」未更改", "ffffcc55")
         return
     end
     if channels.public == previous.public and channels.guild == previous.guild then return end
@@ -428,15 +426,15 @@ local function onRowChannelClick(panel, checkbox, channel)
     }
     local ok, err = WKM:UpdateRule(id, nil, nil, nil, channels)
     if not ok then
-        checkbox:SetChecked(previous[channel])
+        WKM:SetToggleState(toggle, previous[channel])
         setStatus(panel, "保存频道失败：" .. tostring(err), "ffff5555")
         return
     end
 
     WKM.DB.lastRuleUndo = backup
     if panel.selectedId == id then
-        panel.publicCheck:SetChecked(channels.public)
-        panel.guildCheck:SetChecked(channels.guild)
+        WKM:SetToggleState(panel.publicSwitch, channels.public)
+        WKM:SetToggleState(panel.guildSwitch, channels.guild)
     end
     setStatus(panel, "规则「" .. rule.name .. "」监听频道已保存：" .. channelsLabel(rule) .. "（可回退）", "ff66ff99")
 end
@@ -472,27 +470,17 @@ function WKM:CreateRuleRow(panel, index)
     row.expr:SetJustifyH("LEFT")
     row.expr:SetWordWrap(false)
 
-    row.publicCheck = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-    row.publicCheck:SetSize(20, 20)
-    row.publicCheck:SetPoint("LEFT", 640, 0)
-    row.publicCheck:SetScript("OnClick", function(self)
-        onRowChannelClick(panel, self, "public")
+    row.publicSwitch = self:CreateToggleSwitch(row, true, function(_, toggle)
+        onRowChannelClick(panel, toggle, "public")
     end)
-    bindRuleWheel(row.publicCheck)
-    local publicText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    publicText:SetPoint("LEFT", row.publicCheck, "RIGHT", 0, 0)
-    publicText:SetText("公")
+    row.publicSwitch:SetPoint("LEFT", 638, 0)
+    bindRuleWheel(row.publicSwitch)
 
-    row.guildCheck = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-    row.guildCheck:SetSize(20, 20)
-    row.guildCheck:SetPoint("LEFT", 686, 0)
-    row.guildCheck:SetScript("OnClick", function(self)
-        onRowChannelClick(panel, self, "guild")
+    row.guildSwitch = self:CreateToggleSwitch(row, false, function(_, toggle)
+        onRowChannelClick(panel, toggle, "guild")
     end)
-    bindRuleWheel(row.guildCheck)
-    local guildText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    guildText:SetPoint("LEFT", row.guildCheck, "RIGHT", 0, 0)
-    guildText:SetText("会")
+    row.guildSwitch:SetPoint("LEFT", 698, 0)
+    bindRuleWheel(row.guildSwitch)
 
     row.del = self:CreateButton(row, "删除", 58, 22)
     row.del:SetPoint("RIGHT", -4, 0)
@@ -564,29 +552,33 @@ function WKM:CreateRulesPanel(panel)
     channelLabel:SetPoint("TOPLEFT", 446, -112)
     channelLabel:SetText("该规则：")
 
-    panel.publicCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
-    panel.publicCheck:SetSize(22, 22)
-    panel.publicCheck:SetPoint("TOPLEFT", 494, -106)
-    panel.publicCheck:SetScript("OnClick", function(self) onChannelClick(panel, self) end)
+    panel.publicSwitch = self:CreateToggleSwitch(panel, true, function(_, toggle)
+        onChannelClick(panel, toggle)
+    end)
+    panel.publicSwitch:SetPoint("TOPLEFT", 495, -103)
     local publicText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    publicText:SetPoint("LEFT", panel.publicCheck, "RIGHT", 0, 0)
-    publicText:SetText("公共频道")
+    publicText:SetPoint("LEFT", panel.publicSwitch, "RIGHT", 4, 0)
+    publicText:SetText("公共")
 
-    panel.guildCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
-    panel.guildCheck:SetSize(22, 22)
-    panel.guildCheck:SetPoint("TOPLEFT", 615, -106)
-    panel.guildCheck:SetScript("OnClick", function(self) onChannelClick(panel, self) end)
+    panel.guildSwitch = self:CreateToggleSwitch(panel, false, function(_, toggle)
+        onChannelClick(panel, toggle)
+    end)
+    panel.guildSwitch:SetPoint("TOPLEFT", 625, -103)
     local guildText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    guildText:SetPoint("LEFT", panel.guildCheck, "RIGHT", 0, 0)
-    guildText:SetText("公会频道")
+    guildText:SetPoint("LEFT", panel.guildSwitch, "RIGHT", 4, 0)
+    guildText:SetText("公会")
 
     local header = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     header:SetPoint("TOPLEFT", 8, -134)
     header:SetText("状态        名称                       表达式")
 
-    local scopeHeader = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    scopeHeader:SetPoint("TOPLEFT", 642, -134)
-    scopeHeader:SetText("监听：公 / 会")
+    local publicHeader = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    publicHeader:SetPoint("TOPLEFT", 656, -134)
+    publicHeader:SetText("公共")
+
+    local guildHeader = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    guildHeader:SetPoint("TOPLEFT", 716, -134)
+    guildHeader:SetText("公会")
 
     for i = 1, RULES_PER_PAGE do
         self:CreateRuleRow(panel, i)
@@ -641,18 +633,18 @@ function WKM:RefreshRulesUI(reset)
             row.name.ruleId = rule.id
             row.name:SetText(rule.name)
             row.expr:SetText(rule.expression)
-            row.publicCheck.ruleId = rule.id
-            row.guildCheck.ruleId = rule.id
+            row.publicSwitch.ruleId = rule.id
+            row.guildSwitch.ruleId = rule.id
             local ch = rule.channels or { public = true, guild = false }
-            row.publicCheck:SetChecked(ch.public ~= false)
-            row.guildCheck:SetChecked(ch.guild == true)
+            self:SetToggleState(row.publicSwitch, ch.public ~= false)
+            self:SetToggleState(row.guildSwitch, ch.guild == true)
             row.del.ruleId = rule.id
         else
             row:Hide()
             row.switch.ruleId = nil
             row.name.ruleId = nil
-            row.publicCheck.ruleId = nil
-            row.guildCheck.ruleId = nil
+            row.publicSwitch.ruleId = nil
+            row.guildSwitch.ruleId = nil
             row.del.ruleId = nil
         end
     end
