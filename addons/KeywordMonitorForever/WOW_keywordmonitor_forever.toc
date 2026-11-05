@@ -1,6 +1,6 @@
 ## Interface: 16001
-## Title: WOW Keyword Monitor - 无限服
-## Notes: Forever chat monitoring with secret-value guards
+## Title: WOW Keyword Monitor (无限服)
+## Notes: Forever 1.60.1 public/guild keyword monitor
 ## Author: delinecnlin
 ## Version: 0.1.0-alpha
 ## SavedVariables: WOWKeywordMonitorForeverDB

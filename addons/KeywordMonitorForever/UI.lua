@@ -166,11 +166,11 @@ function WKM:CreateMainWindow()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 22, -18)
-    title:SetText("WOW Keyword Monitor - 无限服")
+    title:SetText("WOW Keyword Monitor")
 
     local subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     subtitle:SetPoint("LEFT", title, "RIGHT", 12, 0)
-    subtitle:SetText("Forever / Interface 16001")
+    subtitle:SetText("Forever / 无限服")
 
     local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -5, -5)

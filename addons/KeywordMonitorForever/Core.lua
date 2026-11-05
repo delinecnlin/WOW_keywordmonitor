@@ -4,10 +4,6 @@ local WKM = WOWKeywordMonitorForever
 
 local eventFrame = CreateFrame("Frame")
 local recentMessages = {}
--- Secret values in Forever cannot be searched or converted to strings.
-local function isProtected(value)
-    return type(issecretvalue) == "function" and issecretvalue(value)
-end
 -- Temporary keywords are intentionally runtime-only: /reload and logout clear them.
 local temporaryKeywords = {}
 local MAX_TEMP_KEYWORDS = 30
@@ -67,7 +63,7 @@ local function mergeUnique(target, values)
 end
 
 function WKM:Print(message)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff33ccff[WKMF]|r " .. tostring(message or ""))
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ccff[WKM]|r " .. tostring(message or ""))
 end
 
 function WKM:GetRelativeTime(timestamp)
@@ -81,22 +77,18 @@ end
 
 function WKM:GetPlayerClassByGUID(guid)
     if not guid or guid == "" then return nil, nil end
-
-    if GetPlayerInfoByGUID then
-        local localizedClass, classFile = GetPlayerInfoByGUID(guid)
-        if classFile and classFile ~= "" then
-            return classFile, localizedClass
-        end
+    if issecretvalue and issecretvalue(guid) then return nil, nil end
+    local function query(func)
+        if not func then return nil, nil end
+        local ok, localized, file = pcall(func, guid)
+        if not ok then return nil, nil end
+        if issecretvalue and (issecretvalue(localized) or issecretvalue(file)) then return nil, nil end
+        if file and file ~= "" then return file, localized end
+        return nil, nil
     end
-
-    if UnitClassFromGUID then
-        local localizedClass, classFile = UnitClassFromGUID(guid)
-        if classFile and classFile ~= "" then
-            return classFile, localizedClass
-        end
-    end
-
-    return nil, nil
+    local file, name = query(GetPlayerInfoByGUID)
+    if file then return file, name end
+    return query(UnitClassFromGUID)
 end
 
 function WKM:IsBlacklisted(name, guid)
@@ -382,7 +374,6 @@ function WKM:ListTemporaryKeywords()
 end
 
 function WKM:MatchText(message, channelType)
-    if isProtected(message) or type(message) ~= "string" then return {}, {} end
     channelType = channelType or "public"
     local matchedRules, matchedTerms = {}, {}
     for _, rule in ipairs(self.DB.rules) do
@@ -413,22 +404,18 @@ function WKM:MatchText(message, channelType)
 end
 
 function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, guid, channelType)
-    if not self.DB or not self.DB.enabled then return end
-    if isProtected(message) or isProtected(sender) then
-        self.protectedMessageCount = (self.protectedMessageCount or 0) + 1
-        if not self.protectedMessageNotice then
-            self.protectedMessageNotice = true
-            self:Print("部分聊天数据受到客户端保护，已跳过受保护消息")
-        end
+    -- Forever chat events can contain Secret Values under messaging lockdown.
+    -- Skip protected text/sender fields; never inspect or persist protected data.
+    if issecretvalue and (issecretvalue(message) or issecretvalue(sender)
+        or issecretvalue(channelName) or issecretvalue(channelIndex)
+        or issecretvalue(lineID) or issecretvalue(guid)) then
+        self.skippedProtectedChat = (self.skippedProtectedChat or 0) + 1
         return
     end
-    if type(message) ~= "string" or message == "" then return end
-    if type(sender) ~= "string" then sender = "" end
-    if shortName(sender) == UnitName("player") then return end
-    if isProtected(channelName) then channelName = nil end
-    if isProtected(channelIndex) then channelIndex = nil end
-    if isProtected(lineID) then lineID = nil end
-    if isProtected(guid) then guid = nil end
+    if not self.DB.enabled or not message or message == "" then return end
+    local playerName = UnitName("player")
+    if not (issecretvalue and issecretvalue(playerName))
+        and shortName(sender) == playerName then return end
 
     self:PruneExpiredHistory()
 
@@ -603,9 +590,9 @@ local function handleSlash(input)
     if cmd == "" then
         WKM:ToggleMainWindow()
     elseif cmd == "help" or cmd == "?" then
-        WKM:Print("/wkm 关键词（快速临时监听公共频道）；/wkm tg 关键词（公会）")
-        WKM:Print("/wkm tl（列表）；/wkm tr 关键词（删除）；/wkm tc（清空）；/wkm t 关键词（兼容旧写法）")
-        WKM:Print("/wkm（窗口）；/wkm scopes（查看已保存的规则频道）；/wkm test 文本；/wkm testguild 文本；/wkm on；/wkm off；/wkm clear")
+        WKM:Print("/wkmf 关键词（快速临时监听公共频道）；/wkmf tg 关键词（公会）")
+        WKM:Print("/wkmf tl（列表）；/wkmf tr 关键词（删除）；/wkmf tc（清空）；/wkmf t 关键词（兼容旧写法）")
+        WKM:Print("/wkmf（窗口）；/wkmf scopes（查看已保存的规则频道）；/wkmf test 文本；/wkmf testguild 文本；/wkmf on；/wkmf off；/wkmf clear")
     elseif cmd == "on" then
         WKM:SetEnabled(true)
         WKM:Print("监听已开启")
@@ -615,6 +602,8 @@ local function handleSlash(input)
     elseif cmd == "clear" then
         WKM:ClearHistory()
         WKM:Print("匹配历史已清空")
+    elseif cmd == "secrets" then
+        WKM:Print("本次登录跳过的受保护聊天消息：" .. tostring(WKM.skippedProtectedChat or 0))
     elseif cmd == "scopes" then
         -- Read the saved rule table directly, not the editor checkbox draft.
         WKM:Print("已保存规则频道状态（每条规则的公会/公共选择）：")
@@ -626,7 +615,7 @@ local function handleSlash(input)
         end
     elseif cmd == "t" or cmd == "temp" or cmd == "tg" then
         if rest == "" then
-            WKM:Print(cmd == "tg" and "用法：/wkm tg 公会临时关键词" or "用法：/wkm t 公共频道临时关键词")
+            WKM:Print(cmd == "tg" and "用法：/wkmf tg 公会临时关键词" or "用法：/wkmf t 公共频道临时关键词")
             return
         end
         local channelType = cmd == "tg" and "guild" or "public"
@@ -640,7 +629,7 @@ local function handleSlash(input)
         WKM:ListTemporaryKeywords()
     elseif cmd == "tr" then
         if rest == "" then
-            WKM:Print("用法：/wkm tr 要删除的临时关键词")
+            WKM:Print("用法：/wkmf tr 要删除的临时关键词")
             return
         end
         local removed = WKM:RemoveTemporaryKeyword(rest)
@@ -651,7 +640,7 @@ local function handleSlash(input)
     elseif cmd == "test" or cmd == "testguild" then
         local isGuild = cmd == "testguild"
         if rest == "" then
-            WKM:Print(isGuild and "用法：/wkm testguild 要测试的公会消息" or "用法：/wkm test 要测试的公共频道消息")
+            WKM:Print(isGuild and "用法：/wkmf testguild 要测试的公会消息" or "用法：/wkmf test 要测试的公共频道消息")
             return
         end
         local channelType = isGuild and "guild" or "public"
@@ -691,10 +680,10 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if WKM.CreateMainWindow then WKM:CreateMainWindow() end
         if WKM.CreateMinimapButton then WKM:CreateMinimapButton() end
 
-        SLASH_WOWKEYWORDMONITORFOREVER1 = "/wkm"
-        SLASH_WOWKEYWORDMONITORFOREVER2 = "/wkmf"
+        SLASH_WOWKEYWORDMONITORFOREVER1 = "/wkmf"
+        SLASH_WOWKEYWORDMONITORFOREVER2 = "/kwmf"
         SlashCmdList["WOWKEYWORDMONITORFOREVER"] = handleSlash
-        WKM:Print("无限服版已加载，使用 /wkmf 或 /wkm")
+        WKM:Print("无限服版已加载。/wkmf 打开窗口；/wkmf secrets 查看受保护聊天计数")
         return
     end
 
@@ -705,11 +694,10 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 
     if event == "CHAT_MSG_CHANNEL" then
         local message, sender, _, channelName, _, _, _, channelIndex, channelBaseName, _, lineID, guid = ...
-        if isProtected(channelName) then channelName = nil end
-        if isProtected(channelBaseName) then channelBaseName = nil end
+        if issecretvalue and (issecretvalue(channelName) or issecretvalue(channelBaseName)) then return end
         local displayChannel = channelBaseName
         if not displayChannel or displayChannel == "" then displayChannel = channelName end
-        WKM:ProcessChat(message, sender, displayChannel or "公共", channelIndex, lineID, guid, "public")
+        WKM:ProcessChat(message, sender, displayChannel, channelIndex, lineID, guid, "public")
         return
     end
 

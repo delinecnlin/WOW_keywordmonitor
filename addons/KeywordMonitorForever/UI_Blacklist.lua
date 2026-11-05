@@ -4,24 +4,13 @@ local ROWS, ROW_H = 10, 36
 
 local function whisper(name)
     if name and name ~= "" then
-        if ChatFrameUtil and ChatFrameUtil.OpenChat then
-            ChatFrameUtil.OpenChat("/w " .. name .. " ")
-        elseif ChatFrame_OpenChat then
-            ChatFrame_OpenChat("/w " .. name .. " ")
-        else
-            WKM:Print("当前客户端不支持直接打开密语")
-        end
+        ChatFrame_OpenChat("/w " .. name .. " ")
     end
 end
 
 local function invite(name)
     if name and name ~= "" then
-        local inviteAPI = C_PartyInfo and C_PartyInfo.InviteUnit or InviteUnit
-        if not inviteAPI then
-            WKM:Print("当前客户端没有可用的组队邀请接口")
-            return
-        end
-        local ok, err = pcall(inviteAPI, name)
+        local ok, err = pcall(InviteUnit, name)
         if not ok then WKM:Print("邀请失败：" .. tostring(err)) end
     end
 end
