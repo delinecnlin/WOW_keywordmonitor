@@ -5,6 +5,7 @@
 | 子项目 | 路径 | 状态 |
 | --- | --- | --- |
 | WOW Keyword Monitor | `addons/KeywordMonitor/` | 支持公会频道、角色好友备注及 `/wkm 关键词` 临时监听 |
+| WOW Keyword Monitor（无限服） | `addons/KeywordMonitorForever/` | 独立 `16001` 测试版；`/wkmf`，配置互不影响 |
 | AuctionCollector | `addons/AuctionCollector/` | AH 多物品人工采集器，不含插件内分析，`/ac` |
 | Mac Sync | `apps/mac-sync/` | SavedVariables 导入 |
 | Market API & Research | `services/` | 数据存储、市场研究、回归基线 |
@@ -37,5 +38,7 @@ bash scripts/install-macos.sh "/Applications/World of Warcraft/_classic_era_/Int
 国服实际 AH API 尚未在用户 Mac 客户端验证；若接口不兼容，插件应安全报错而非假装扫描成功。第三方挂牌金价不代表已成交价格。位面数与金价的历史对应关系目前是待核实的用户观察，不能直接作为因果推断。
 
 ## WoW Forever 无限服版本
+
+本仓库中的 `scripts/install-macos.sh` 是经典旧世插件安装脚本，不会安装无限服版。无限服需使用独立 ZIP 或手动复制目录。请勿将整仓库解压到 AddOns。
 
 单独目录：`addons/KeywordMonitorForever/`（Interface `16001`，版本 `0.1.0-alpha`）。安装至 `_forever_/Interface/AddOns/WOW_keywordmonitor_forever/`，与 Classic Era 版使用不同的配置和框体名称。详情见独立目录 README。
