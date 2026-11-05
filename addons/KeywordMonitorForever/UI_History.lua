@@ -1,0 +1,535 @@
+WOWKeywordMonitorForever = WOWKeywordMonitorForever or {}
+local WKM = WOWKeywordMonitorForever
+local ROWS, ROW_H = 10, 36
+
+local function whisper(name)
+    if name and name ~= "" then
+        if ChatFrameUtil and ChatFrameUtil.OpenChat then
+            ChatFrameUtil.OpenChat("/w " .. name .. " ")
+        elseif ChatFrame_OpenChat then
+            ChatFrame_OpenChat("/w " .. name .. " ")
+        else
+            WKM:Print("当前客户端不支持直接打开密语")
+        end
+    end
+end
+
+local function invite(name)
+    if name and name ~= "" then
+        local inviteAPI = C_PartyInfo and C_PartyInfo.InviteUnit or InviteUnit
+        if not inviteAPI then
+            WKM:Print("当前客户端没有可用的组队邀请接口")
+            return
+        end
+        local ok, err = pcall(inviteAPI, name)
+        if not ok then WKM:Print("邀请失败：" .. tostring(err)) end
+    end
+end
+
+local function classColor(classFile)
+    local colors = CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS
+    local color = colors and classFile and colors[classFile]
+    if color then
+        return color.r or 1, color.g or 1, color.b or 1
+    end
+    return 1, 0.82, 0
+end
+
+function WKM:EnsureHistoryPreview()
+    if self.historyPreview then return self.historyPreview end
+    if not self.mainFrame then return nil end
+
+    local tpl = BackdropTemplateMixin and "BackdropTemplate" or nil
+    -- Parent to the addon window so WoW hides this floating preview
+    -- automatically whenever the main window is closed (including ESC).
+    local preview = CreateFrame("Frame", "WKMF_HistoryMessagePreview", self.mainFrame, tpl)
+    preview:SetFrameStrata("TOOLTIP")
+    preview:SetClampedToScreen(true)
+    preview:EnableMouse(false)
+    preview:SetSize(560, 70)
+    self:StylePanel(preview)
+
+    preview.text = preview:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    preview.text:SetPoint("TOPLEFT", 16, -14)
+    preview.text:SetPoint("RIGHT", -16, 0)
+    preview.text:SetJustifyH("LEFT")
+    preview.text:SetJustifyV("TOP")
+    preview.text:SetWordWrap(true)
+
+    preview:Hide()
+    self.historyPreview = preview
+    return preview
+end
+
+function WKM:ShowHistoryEntryTooltip(owner, entry)
+    if not owner or not entry then return end
+    if not self.mainFrame or not self.mainFrame:IsShown() or not owner:IsShown() then return end
+
+    local preview = self:EnsureHistoryPreview()
+    if not preview then return end
+    local text = self.Rules and self.Rules.Sanitize and self.Rules.Sanitize(entry.message) or tostring(entry.message or "")
+    preview.text:SetText(text)
+
+    local textHeight = preview.text:GetStringHeight() or 20
+    preview:SetHeight(math.max(54, textHeight + 30))
+
+    local x, y = GetCursorPosition()
+    local scale = UIParent:GetEffectiveScale()
+    x, y = x / scale, y / scale
+
+    preview:ClearAllPoints()
+    preview:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x + 18, y + 18)
+    preview:Show()
+end
+
+function WKM:HideHistoryEntryTooltip()
+    if self.historyPreview then
+        self.historyPreview:Hide()
+    end
+end
+
+function WKM:DismissHistoryPreview()
+    self:HideHistoryEntryTooltip()
+    -- OnUpdate does not run for a hidden panel; clear cached hovered-row
+    -- state explicitly so reopening the addon can show previews again.
+    local frame = self.mainFrame
+    if not frame then return end
+    for _, panel in ipairs({ frame.historyPanel, frame.blacklistPanel }) do
+        if panel then
+            panel.hoveredRow = nil
+            panel.hoveredEntry = nil
+            panel.hoverCheck = 0
+        end
+    end
+end
+
+local function isPointerOverRow(row)
+    if not row or not row:IsShown() then return false end
+
+    if MouseIsOver then
+        return MouseIsOver(row)
+    end
+
+    if row.IsMouseOver then
+        return row:IsMouseOver()
+    end
+
+    local left, right, top, bottom = row:GetLeft(), row:GetRight(), row:GetTop(), row:GetBottom()
+    if not left or not right or not top or not bottom then return false end
+
+    local x, y = GetCursorPosition()
+    local scale = row:GetEffectiveScale() or UIParent:GetEffectiveScale()
+    x, y = x / scale, y / scale
+    return x >= left and x <= right and y >= bottom and y <= top
+end
+
+-- A character friend is a WoW FriendList entry, not a Battle.net friend.
+-- Native notes are limited to 48 characters by the game.
+function WKM:ShowFriendNoteEditor(name)
+    if not name or name == "" then return end
+
+    local api = C_FriendList
+    if not api or not api.AddFriend or not api.GetFriendInfo then
+        self:Print("当前客户端不支持角色好友备注接口")
+        return
+    end
+
+    if not self.friendNoteFrame then
+        local tpl = BackdropTemplateMixin and "BackdropTemplate" or nil
+        local dialog = CreateFrame("Frame", "WKMF_FriendNoteFrame", self.mainFrame, tpl)
+        dialog:SetSize(440, 155)
+        dialog:SetPoint("CENTER", self.mainFrame, "CENTER")
+        dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+        dialog:EnableMouse(true)
+        dialog:SetClampedToScreen(true)
+        self:StylePanel(dialog)
+
+        dialog.heading = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        dialog.heading:SetPoint("TOPLEFT", 20, -18)
+        dialog.heading:SetPoint("RIGHT", -35, 0)
+        dialog.heading:SetJustifyH("LEFT")
+
+        local hint = dialog:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        hint:SetPoint("TOPLEFT", 20, -45)
+        hint:SetText("WoW 角色好友备注（非战网好友，最多 48 字）")
+
+        dialog.note = self:CreateEditBox(dialog, 380, 26)
+        dialog.note:SetPoint("TOP", 0, -76)
+        dialog.note:SetMaxLetters(48)
+
+        dialog.confirm = self:CreateButton(dialog, "添加好友", 104, 24)
+        dialog.confirm:SetPoint("BOTTOMRIGHT", -128, 16)
+        dialog.confirm:SetScript("OnClick", function()
+            local friendName = dialog.playerName
+            if not friendName or friendName == "" then return end
+            local note = dialog.note:GetText() or ""
+            local queryOK, existingInfo = pcall(api.GetFriendInfo, friendName)
+            local alreadyFriend = queryOK and existingInfo ~= nil
+            if not alreadyFriend and api.IsFriend then
+                local ok, isFriend = pcall(api.IsFriend, friendName)
+                if ok and isFriend then alreadyFriend = true end
+            end
+
+            if alreadyFriend then
+                if not api.SetFriendNotes then
+                    WKM:Print("当前客户端不支持修改好友备注")
+                    return
+                end
+                local ok, result = pcall(api.SetFriendNotes, friendName, note)
+                if not ok or result == false then
+                    WKM:Print("修改好友备注失败：" .. tostring(result))
+                    return
+                end
+                WKM:Print("已修改角色好友备注：" .. friendName)
+            else
+                -- Keep this call in the actual button click; AddFriend is restricted
+                -- when invoked through /run and other non-hardware contexts.
+                local ok, err = pcall(api.AddFriend, friendName, note)
+                if not ok then
+                    WKM:Print("添加角色好友失败：" .. tostring(err))
+                    return
+                end
+                WKM:Print("已向 WoW 提交角色好友添加操作：" .. friendName)
+            end
+            dialog:Hide()
+        end)
+
+        local cancel = self:CreateButton(dialog, "取消", 90, 24)
+        cancel:SetPoint("LEFT", dialog.confirm, "RIGHT", 8, 0)
+        cancel:SetScript("OnClick", function() dialog:Hide() end)
+
+        local close = CreateFrame("Button", nil, dialog, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", -3, -3)
+        dialog:Hide()
+        self.friendNoteFrame = dialog
+    end
+
+    local dialog = self.friendNoteFrame
+    dialog.playerName = name
+    local ok, info = pcall(api.GetFriendInfo, name)
+    info = ok and info or nil
+    local alreadyFriend = info ~= nil
+    if not alreadyFriend and api.IsFriend then
+        local friendOK, result = pcall(api.IsFriend, name)
+        if friendOK and result then alreadyFriend = true end
+    end
+
+    dialog.heading:SetText((alreadyFriend and "编辑好友备注：" or "添加角色好友：") .. name)
+    dialog.confirm:SetText(alreadyFriend and "保存备注" or "添加好友")
+    dialog.note:SetText(info and info.notes or "")
+    if self.DismissHistoryPreview then self:DismissHistoryPreview() end
+    dialog:Show()
+    dialog.note:SetFocus()
+    dialog.note:HighlightText()
+end
+
+function WKM:ShowCopyName(name)
+    if not self.copyFrame then
+        local tpl = BackdropTemplateMixin and "BackdropTemplate" or nil
+        local f = CreateFrame("Frame", "WKMF_CopyNameFrame", UIParent, tpl)
+        f:SetSize(320, 95)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("TOOLTIP")
+        self:StylePanel(f)
+
+        local t = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        t:SetPoint("TOP", 0, -18)
+        t:SetText("Ctrl+C 复制玩家名字")
+
+        f.edit = self:CreateEditBox(f, 245, 26)
+        f.edit:SetPoint("CENTER", 0, -8)
+
+        local x = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+        x:SetPoint("TOPRIGHT", -4, -4)
+
+        self.copyFrame = f
+    end
+
+    self.copyFrame.edit:SetText(name or "")
+    self.copyFrame:Show()
+    self.copyFrame.edit:SetFocus()
+    self.copyFrame.edit:HighlightText()
+end
+
+function WKM:ShowPlayerContextMenu(name, classFile, className)
+    if not name or name == "" then return end
+
+    if not self.playerMenu then
+        local tpl = BackdropTemplateMixin and "BackdropTemplate" or nil
+        local menu = CreateFrame("Frame", "WKMF_PlayerContextMenu", UIParent, tpl)
+        menu:SetSize(180, 142)
+        menu:SetFrameStrata("TOOLTIP")
+        menu:SetClampedToScreen(true)
+        menu:EnableMouse(true)
+        self:StylePanel(menu)
+
+        menu.title = menu:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        menu.title:SetPoint("TOPLEFT", 16, -16)
+        menu.title:SetPoint("RIGHT", -30, 0)
+        menu.title:SetJustifyH("LEFT")
+
+        menu.classText = menu:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        menu.classText:SetPoint("TOPLEFT", 16, -34)
+        menu.classText:SetPoint("RIGHT", -16, 0)
+        menu.classText:SetJustifyH("LEFT")
+
+        local close = CreateFrame("Button", nil, menu, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", -3, -3)
+
+        menu.whisper = self:CreateButton(menu, "密语", 140, 24)
+        menu.whisper:SetPoint("TOP", 0, -55)
+        menu.whisper:SetScript("OnClick", function()
+            whisper(menu.playerName)
+            menu:Hide()
+        end)
+
+        menu.invite = self:CreateButton(menu, "邀请进组", 140, 24)
+        menu.invite:SetPoint("TOP", menu.whisper, "BOTTOM", 0, -4)
+        menu.invite:SetScript("OnClick", function()
+            invite(menu.playerName)
+            menu:Hide()
+        end)
+
+        menu.copy = self:CreateButton(menu, "复制名字", 140, 24)
+        menu.copy:SetPoint("TOP", menu.invite, "BOTTOM", 0, -4)
+        menu.copy:SetScript("OnClick", function()
+            WKM:ShowCopyName(menu.playerName)
+            menu:Hide()
+        end)
+
+        if UISpecialFrames then
+            table.insert(UISpecialFrames, "WKMF_PlayerContextMenu")
+        end
+
+        self.playerMenu = menu
+    end
+
+    local menu = self.playerMenu
+    menu.playerName = name
+    menu.classFile = classFile
+    menu.classNameValue = className
+
+    local r, g, b = classColor(classFile)
+    menu.title:SetText(name)
+    menu.title:SetTextColor(r, g, b)
+    menu.classText:SetText(className or classFile or "职业未知")
+
+    local x, y = GetCursorPosition()
+    local scale = UIParent:GetEffectiveScale()
+    x, y = x / scale, y / scale
+
+    menu:ClearAllPoints()
+    menu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x + 6, y - 6)
+    menu:Show()
+end
+
+function WKM:CreateHistoryPanel(panel)
+    panel.offset, panel.rows = 0, {}
+
+    local h = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    h:SetPoint("TOPLEFT", 8, -8)
+    h:SetText("时间       玩家                 规则                    频道             消息")
+
+    for i = 1, ROWS do
+        local row = CreateFrame("Frame", nil, panel)
+        row:SetHeight(ROW_H)
+        row:SetPoint("TOPLEFT", 4, -28 - (i - 1) * ROW_H)
+        row:SetPoint("RIGHT", -4, 0)
+
+        row.time = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.time:SetPoint("LEFT", 4, 0)
+        row.time:SetWidth(72)
+        row.time:SetJustifyH("LEFT")
+
+        row.sender = WKM:CreateButton(row, "", 112, 23)
+        row.sender:SetPoint("LEFT", 78, 0)
+        row.sender:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        row.sender:SetScript("OnClick", function(self, button)
+            if button == "RightButton" then
+                WKM:ShowPlayerContextMenu(self.player, self.classFile, self.className)
+            else
+                whisper(self.player)
+            end
+        end)
+
+        row.rule = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.rule:SetPoint("LEFT", 195, 0)
+        row.rule:SetWidth(135)
+        row.rule:SetJustifyH("LEFT")
+        row.rule:SetWordWrap(false)
+
+        row.channel = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.channel:SetPoint("LEFT", 334, 0)
+        row.channel:SetWidth(85)
+        row.channel:SetJustifyH("LEFT")
+        row.channel:SetWordWrap(false)
+
+        row.msg = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.msg:SetPoint("LEFT", 423, 0)
+        row.msg:SetWidth(210)
+        row.msg:SetJustifyH("LEFT")
+        row.msg:SetWordWrap(false)
+
+        row.friend = WKM:CreateButton(row, "友", 28, 22)
+        row.friend:SetPoint("RIGHT", -132, 0)
+        row.friend:SetScript("OnClick", function(self)
+            if self.player then WKM:ShowFriendNoteEditor(self.player) end
+        end)
+
+        row.blacklist = WKM:CreateButton(row, "黑", 28, 22)
+        row.blacklist:SetPoint("RIGHT", -100, 0)
+        row.blacklist:SetScript("OnClick", function(self)
+            if self.player then WKM:AddToBlacklist(self.player) end
+        end)
+
+        row.pm = WKM:CreateButton(row, "密", 28, 22)
+        row.pm:SetPoint("RIGHT", -68, 0)
+        row.pm:SetScript("OnClick", function(self) whisper(self.player) end)
+
+        row.inv = WKM:CreateButton(row, "+", 28, 22)
+        row.inv:SetPoint("RIGHT", -36, 0)
+        row.inv:SetScript("OnClick", function(self) invite(self.player) end)
+
+        row.copy = WKM:CreateButton(row, "复", 28, 22)
+        row.copy:SetPoint("RIGHT", -4, 0)
+        row.copy:SetScript("OnClick", function(self) WKM:ShowCopyName(self.player) end)
+
+        panel.rows[i] = row
+    end
+
+    panel.empty = panel:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+    panel.empty:SetPoint("CENTER", 0, 20)
+    panel.empty:SetText("还没有匹配消息")
+
+    panel.count = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    panel.count:SetPoint("BOTTOMLEFT", 8, 8)
+
+    local clear = self:CreateButton(panel, "清空历史", 90, 24)
+    clear:SetPoint("BOTTOMRIGHT", -8, 4)
+    clear:SetScript("OnClick", function() WKM:ClearHistory() end)
+
+    panel:EnableMouseWheel(true)
+    panel:SetScript("OnMouseWheel", function(_, delta)
+        local max = math.max(0, #WKM.DB.history - ROWS)
+        panel.offset = math.max(0, math.min(max, panel.offset + (delta < 0 and 1 or -1)))
+        WKM:RefreshHistoryUI()
+    end)
+
+    -- Hidden panels no longer receive OnUpdate. Cleanup must happen
+    -- at hide time to prevent a full-text preview lingering on screen.
+    panel:SetScript("OnHide", function()
+        WKM:DismissHistoryPreview()
+    end)
+
+    panel.tick = 0
+    panel.hoverCheck = 0
+    panel.hoveredRow = nil
+    panel:SetScript("OnUpdate", function(self, elapsed)
+        if WKM.friendNoteFrame and WKM.friendNoteFrame:IsShown() then
+            if self.hoveredRow then
+                self.hoveredRow = nil
+                self.hoveredEntry = nil
+                WKM:HideHistoryEntryTooltip()
+            end
+            return
+        end
+        if not self:IsShown() then
+            if self.hoveredRow then
+                self.hoveredRow = nil
+                self.hoveredEntry = nil
+                WKM:HideHistoryEntryTooltip()
+            end
+            return
+        end
+
+        self.hoverCheck = self.hoverCheck + elapsed
+        if self.hoverCheck >= 0.05 then
+            self.hoverCheck = 0
+
+            local hovered = nil
+            for _, row in ipairs(self.rows) do
+                if row:IsShown() and row.entry then
+                    if isPointerOverRow(row) then
+                        hovered = row
+                        break
+                    end
+                end
+            end
+
+            local hoveredEntry = hovered and hovered.entry or nil
+            if hovered ~= self.hoveredRow or hoveredEntry ~= self.hoveredEntry then
+                self.hoveredRow = hovered
+                self.hoveredEntry = hoveredEntry
+                if hovered and hoveredEntry then
+                    WKM:ShowHistoryEntryTooltip(hovered, hoveredEntry)
+                else
+                    WKM:HideHistoryEntryTooltip()
+                end
+            end
+        end
+
+        self.tick = self.tick + elapsed
+        if self.tick >= 5 then
+            self.tick = 0
+            WKM:RefreshHistoryUI()
+        end
+    end)
+end
+
+function WKM:RefreshHistoryUI(reset)
+    if not self.mainFrame then return end
+    self:PruneExpiredHistory()
+
+    local p, hist = self.mainFrame.historyPanel, self.DB.history
+    if reset then p.offset = 0 end
+    p.offset = math.min(p.offset or 0, math.max(0, #hist - ROWS))
+    p.empty:SetShown(#hist == 0)
+    p.count:SetText(string.format("已保存 %d / %d 条", #hist, self.DB.settings.maxHistory))
+
+    for i, row in ipairs(p.rows) do
+        local e = hist[#hist - p.offset - i + 1]
+        if e then
+            if not e.classFile and e.guid then
+                e.classFile, e.className = self:GetPlayerClassByGUID(e.guid)
+            end
+
+            row:Show()
+            row.entry = e
+            row.time:SetText(self:GetRelativeTime(e.timestamp))
+
+            row.sender:SetText(e.sender or "?")
+            row.sender.player = e.sender
+            row.sender.classFile = e.classFile
+            row.sender.className = e.className
+            row.sender.entry = e
+
+            local r, g, b = classColor(e.classFile)
+            local fontString = row.sender:GetFontString()
+            if fontString then fontString:SetTextColor(r, g, b) end
+
+            row.rule:SetText(table.concat(e.ruleNames or {}, ","))
+            row.channel:SetText(e.channel or "?")
+            row.msg:SetText(self.Rules.Highlight(e.message, e.matchedTerms))
+
+            row.friend.player = e.sender
+            row.blacklist.player = e.sender
+            row.blacklist.entry = e
+            row.pm.player = e.sender
+            row.inv.player = e.sender
+            row.copy.player = e.sender
+            row.pm.entry = e
+            row.inv.entry = e
+            row.copy.entry = e
+        else
+            row.entry = nil
+            row.sender.entry = nil
+            row.friend.player = nil
+            row.blacklist.player = nil
+            row.blacklist.entry = nil
+            row.pm.entry = nil
+            row.inv.entry = nil
+            row.copy.entry = nil
+            row:Hide()
+        end
+    end
+end

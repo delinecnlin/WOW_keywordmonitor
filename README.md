@@ -35,3 +35,7 @@ bash scripts/install-macos.sh "/Applications/World of Warcraft/_classic_era_/Int
 ## 重要限制
 
 国服实际 AH API 尚未在用户 Mac 客户端验证；若接口不兼容，插件应安全报错而非假装扫描成功。第三方挂牌金价不代表已成交价格。位面数与金价的历史对应关系目前是待核实的用户观察，不能直接作为因果推断。
+
+## WoW Forever 无限服版本
+
+单独目录：`addons/KeywordMonitorForever/`（Interface `16001`，版本 `0.1.0-alpha`）。安装至 `_forever_/Interface/AddOns/WOW_keywordmonitor_forever/`，与 Classic Era 版使用不同的配置和框体名称。详情见独立目录 README。
