@@ -41,4 +41,4 @@ bash scripts/install-macos.sh "/Applications/World of Warcraft/_classic_era_/Int
 
 本仓库中的 `scripts/install-macos.sh` 是经典旧世插件安装脚本，不会安装无限服版。无限服需使用独立 ZIP 或手动复制目录。请勿将整仓库解压到 AddOns。
 
-单独目录：`addons/KeywordMonitorForever/`（Interface `16001`，版本 `0.1.0-alpha`）。安装至 `_forever_/Interface/AddOns/WOW_keywordmonitor_forever/`，与 Classic Era 版使用不同的配置和框体名称。详情见独立目录 README。
+单独目录：`addons/KeywordMonitorForever/`（Interface `16001`，版本 `0.1.1-alpha`）。安装至 `_forever_/Interface/AddOns/WOW_keywordmonitor_forever/`，与 Classic Era 版使用不同的配置和框体名称。新增自绘屏幕大字提示及 `/wkmf alerttest`、`/wkmf diag`。详情见独立目录 README。
