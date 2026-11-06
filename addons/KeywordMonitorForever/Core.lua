@@ -412,6 +412,7 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
         self.skippedProtectedChat = (self.skippedProtectedChat or 0) + 1
         return
     end
+    self.readableChatCount = (self.readableChatCount or 0) + 1
     if not self.DB.enabled or not message or message == "" then return end
     local playerName = UnitName("player")
     if not (issecretvalue and issecretvalue(playerName))
@@ -434,6 +435,7 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
     local last = recentMessages[key]
     if last and now - last < self.DB.settings.dedupeSeconds then return end
     recentMessages[key] = now
+    self.matchedMessageCount = (self.matchedMessageCount or 0) + 1
 
     for k, seenAt in pairs(recentMessages) do
         if now - seenAt > 60 then recentMessages[k] = nil end
@@ -459,6 +461,7 @@ function WKM:ProcessChat(message, sender, channelName, channelIndex, lineID, gui
     self.DB.nextMessageId = self.DB.nextMessageId + 1
 
     if self:IsBlacklisted(sender, guid) then
+        self.ignoredMatchedCount = (self.ignoredMatchedCount or 0) + 1
         table.insert(self.DB.blacklistHistory, entry)
         while #self.DB.blacklistHistory > self.DB.settings.maxHistory do
             table.remove(self.DB.blacklistHistory, 1)
@@ -592,7 +595,7 @@ local function handleSlash(input)
     elseif cmd == "help" or cmd == "?" then
         WKM:Print("/wkmf 关键词（快速临时监听公共频道）；/wkmf tg 关键词（公会）")
         WKM:Print("/wkmf tl（列表）；/wkmf tr 关键词（删除）；/wkmf tc（清空）；/wkmf t 关键词（兼容旧写法）")
-        WKM:Print("/wkmf（窗口）；/wkmf scopes（查看已保存的规则频道）；/wkmf test 文本；/wkmf testguild 文本；/wkmf on；/wkmf off；/wkmf clear")
+        WKM:Print("/wkmf（窗口）；/wkmf alerttest（屏幕大字测试）；/wkmf diag（监听诊断）；/wkmf scopes；/wkmf test 文本；/wkmf testguild 文本；/wkmf on；/wkmf off；/wkmf clear")
     elseif cmd == "on" then
         WKM:SetEnabled(true)
         WKM:Print("监听已开启")
@@ -604,6 +607,28 @@ local function handleSlash(input)
         WKM:Print("匹配历史已清空")
     elseif cmd == "secrets" then
         WKM:Print("本次登录跳过的受保护聊天消息：" .. tostring(WKM.skippedProtectedChat or 0))
+    elseif cmd == "alerttest" then
+        if WKM.TestScreenAlert then
+            WKM:TestScreenAlert()
+            WKM:Print("已触发大字显示测试（不需要真实聊天命中）")
+            if not WKM.DB.settings.screenAlert then
+                WKM:Print("注意：设置中的「屏幕大字」当前为关闭状态，正常匹配不会显示大字")
+            end
+        else
+            WKM:Print("大字显示组件未加载，请检查 Alerts.lua")
+        end
+    elseif cmd == "diag" then
+        local s = WKM.DB.settings
+        WKM:Print("无限服诊断：全局 " .. (WKM.DB.enabled and "ON" or "OFF")
+            .. "，屏幕大字 " .. (s.screenAlert and "ON" or "OFF"))
+        WKM:Print("事件 公共 " .. tostring(WKM.publicEventCount or 0)
+            .. " / 公会 " .. tostring(WKM.guildEventCount or 0)
+            .. "；可读取 " .. tostring(WKM.readableChatCount or 0)
+            .. "；受保护跳过 " .. tostring(WKM.skippedProtectedChat or 0))
+        WKM:Print("去重后命中 " .. tostring(WKM.matchedMessageCount or 0)
+            .. "；黑名单静默 " .. tostring(WKM.ignoredMatchedCount or 0)
+            .. "；通知调用 " .. tostring(WKM.notifyCount or 0)
+            .. "；大字显示 " .. tostring(WKM.screenAlertShownCount or 0))
     elseif cmd == "scopes" then
         -- Read the saved rule table directly, not the editor checkbox draft.
         WKM:Print("已保存规则频道状态（每条规则的公会/公共选择）：")
@@ -693,8 +718,12 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     end
 
     if event == "CHAT_MSG_CHANNEL" then
+        WKM.publicEventCount = (WKM.publicEventCount or 0) + 1
         local message, sender, _, channelName, _, _, _, channelIndex, channelBaseName, _, lineID, guid = ...
-        if issecretvalue and (issecretvalue(channelName) or issecretvalue(channelBaseName)) then return end
+        if issecretvalue and (issecretvalue(channelName) or issecretvalue(channelBaseName)) then
+            WKM.skippedProtectedChat = (WKM.skippedProtectedChat or 0) + 1
+            return
+        end
         local displayChannel = channelBaseName
         if not displayChannel or displayChannel == "" then displayChannel = channelName end
         WKM:ProcessChat(message, sender, displayChannel, channelIndex, lineID, guid, "public")
@@ -702,6 +731,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     end
 
     if event == "CHAT_MSG_GUILD" then
+        WKM.guildEventCount = (WKM.guildEventCount or 0) + 1
         local message, sender, _, _, _, _, _, _, _, _, lineID, guid = ...
         WKM:ProcessChat(message, sender, "公会", nil, lineID, guid, "guild")
     end
