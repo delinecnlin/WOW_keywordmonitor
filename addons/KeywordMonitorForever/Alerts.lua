@@ -46,7 +46,8 @@ function WKM:EnsureScreenAlert()
     frame.titleText:SetJustifyH("CENTER")
     frame.titleText:SetTextColor(1, 0.82, 0.20)
 
-    frame.bodyText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    frame.bodyText = frame:CreateFontString(nil, "OVERLAY",
+        GameFontNormalHuge and "GameFontNormalHuge" or "GameFontNormalLarge")
     frame.bodyText:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -49)
     frame.bodyText:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -20, 14)
     frame.bodyText:SetJustifyH("CENTER")
