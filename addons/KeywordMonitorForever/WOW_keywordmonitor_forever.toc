@@ -2,7 +2,7 @@
 ## Title: WOW Keyword Monitor (无限服)
 ## Notes: Forever 1.60.1 public/guild keyword monitor
 ## Author: delinecnlin
-## Version: 0.1.0-alpha
+## Version: 0.1.1-alpha
 ## SavedVariables: WOWKeywordMonitorForeverDB
 ## DefaultState: Enabled
 
